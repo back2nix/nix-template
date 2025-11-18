@@ -1,2 +1,38 @@
+# Показать список доступных команд
+default:
+    @just --list
+
+# Запустить приложение (быстро, через go run)
 run:
-  go run main.go
+    go run main.go
+
+# Запустить приложение (как в проде, через nix run)
+run-nix:
+    nix run
+
+# Обновить зависимости (go.mod + gomod2nix)
+deps:
+    go mod tidy
+    gomod2nix
+
+# Собрать бинарник через Nix
+build:
+    nix build .
+
+# Собрать Docker-образ и загрузить его в локальный Docker
+docker:
+    nix build .#docker
+    docker load < result
+
+# Запустить линтеры
+lint:
+    golangci-lint run
+
+# Запустить тесты
+test:
+    go test -v ./...
+
+# Очистить артефакты сборки
+clean:
+    rm -rf result
+    go clean
