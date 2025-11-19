@@ -1,0 +1,32 @@
+[project]
+name = "my-python-project"
+version = "0.1.0"
+description = "A generic Python project template"
+requires-python = ">=3.11"
+dependencies = [
+    "python-dotenv",
+    "numpy",
+    # "torch",
+    # "librosa",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = [
+    "pytest",
+    "black",
+    "isort",
+    "flake8"
+]
+
+# Пример настройки источников для CUDA (как в твоем примере)
+# [[tool.uv.index]]
+# name = "pytorch-cuda"
+# url = "https://download.pytorch.org/whl/cu121"
+# explicit = true
+
+# [tool.uv.sources]
+# torch = [{ index = "pytorch-cuda" }]
