@@ -1,34 +1,36 @@
 { pkgs, mkGoEnv ? pkgs.mkGoEnv, gomod2nix ? pkgs.gomod2nix }:
 
 let
-  # Создаем окружение, которое понимает Go IDE
   goEnv = mkGoEnv { pwd = ./.; };
 in
 pkgs.mkShell {
   packages = with pkgs; [
     # Основные инструменты
     go
-    gomod2nix # Утилита для генерации gomod2nix.toml
+    gomod2nix
     gnumake
 
-    # Линтеры и инструменты разработки
+    # Линтеры и инструменты
     golangci-lint
-    gopls       # LSP сервер
-    gotools     # goimports, etc.
-    delve       # Отладчик
-    go-tools    # staticcheck и прочее
+    gopls
+    gotools
+    delve
+    go-tools
 
-    # Полезные утилиты
-    just        # Альтернатива Make
+    # Утилиты
+    just
     jq
+    grpcurl # Удобно для ручного тестирования gRPC
+
+    # Protobuf инструменты
+    protobuf             # Компилятор protoc
+    protoc-gen-go        # Генерация структур Go
+    protoc-gen-go-grpc   # Генерация gRPC сервиса
   ];
 
-  # Переменные окружения для shell
   shellHook = ''
-    echo "🚀 Go Dev Environment Loaded"
+    echo "🚀 Go gRPC Dev Environment Loaded"
     echo "Go version: $(go version)"
-
-    # Настройка pre-commit хуков, если нужно
-    # git config core.hooksPath .git-hooks
+    echo "Protoc version: $(protoc --version)"
   '';
 }
