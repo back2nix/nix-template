@@ -2,13 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json" // <--- Добавлен импорт для JSON
 	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 
-	// Путь к сгенерированному коду (замени на свой модуль)
 	pb "my-go-app/proto/helloworld"
 
 	"google.golang.org/grpc"
@@ -27,13 +28,22 @@ func (s *server) SayHello(ctx context.Context, in *pb.HelloRequest) (*pb.HelloRe
 	return &pb.HelloReply{Message: "Hello from Nix/gRPC " + in.GetName()}, nil
 }
 
+// --- HTTP API Handler ---
+// Простой обработчик для REST запросов от Vue
+func apiHelloHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	response := map[string]string{
+		"message": "Hello from Go Backend! 🚀",
+	}
+	json.NewEncoder(w).Encode(response)
+}
+
 func main() {
 	fmt.Printf("Starting App... Version: %s\n", Version)
 
-	// Канал, чтобы программа не завершилась
 	forever := make(chan bool)
 
-	// 1. Запускаем gRPC сервер в горутине
+	// 1. gRPC Server
 	go func() {
 		port := ":50051"
 		lis, err := net.Listen("tcp", port)
@@ -49,22 +59,32 @@ func main() {
 		}
 	}()
 
-	// 2. Запускаем HTTP сервер (Vue frontend + API gateway если надо)
+	// 2. HTTP Server (Vue + API)
 	go func() {
 		staticDir := os.Getenv("SERVER_STATIC_DIR")
-		if staticDir == "" { staticDir = "./static" }
+		if staticDir == "" {
+			staticDir = "./static"
+		}
 
+		absPath, _ := filepath.Abs(staticDir)
+
+		// -- 1. Регистрируем API хендлеры (до FileServer!) --
+		http.HandleFunc("/api/hello", apiHelloHandler)
+
+		// -- 2. Раздаем статику Vue --
 		if _, err := os.Stat(staticDir); !os.IsNotExist(err) {
+			// FileServer обрабатывает всё остальное
 			http.Handle("/", http.FileServer(http.Dir(staticDir)))
-			log.Printf("✅ Serving Vue form: %s", staticDir)
+			log.Printf("✅ Serving Vue from: %s (Abs: %s)", staticDir, absPath)
 		} else {
-			log.Println("⚠️  No static files found. API only.")
+			log.Printf("⚠️  No static files found at: %s (Abs: %s). API only.", staticDir, absPath)
 		}
 
 		log.Println("✅ HTTP listening at :8080")
-		http.ListenAndServe(":8080", nil)
+		if err := http.ListenAndServe(":8080", nil); err != nil {
+			log.Fatalf("failed to serve HTTP: %v", err)
+		}
 	}()
 
-	// Ждем вечно
 	<-forever
 }

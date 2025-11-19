@@ -1,13 +1,14 @@
 # Teamplate nix
 
-## Go
+## Go + Vue + Grpc
 
 ```bash
-nix flake new -t github:back2nix/nix-template#go trading-bot-mew --refresh
+nix flake new -t github:back2nix/nix-template#go go-project --refresh
+just deps-front
 ```
 
 ## Python
 
 ```bash
-nix flake new -t github:back2nix/nix-template#python my-py-app --refresh
+nix flake new -t github:back2nix/nix-template#python python-project --refresh
 ```

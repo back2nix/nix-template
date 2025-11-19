@@ -35,8 +35,11 @@ run:
     @echo "📦 Building frontend..."
     cd frontend && yarn build
     @echo "🚀 Starting Backend..."
-    SERVER_STATIC_DIR=../frontend/dist cd backend && go run main.go
+    cd backend && SERVER_STATIC_DIR=../frontend/dist go run main.go
 
 # Сборка через Nix
 build:
     nix build .
+
+grcp-curl:
+  grpcurl -plaintext -d '{"name": "Developer"}' localhost:50051 helloworld.Greeter/SayHello
