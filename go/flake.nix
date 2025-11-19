@@ -1,8 +1,8 @@
 {
-  description = "Standard Go Project Template";
+  description = "Go (gRPC) + Vue (Yarn)";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     gomod2nix.url = "github:nix-community/gomod2nix";
     gomod2nix.inputs.nixpkgs.follows = "nixpkgs";
@@ -13,26 +13,26 @@
       let
         pkgs = import nixpkgs {
           inherit system;
-          overlays = [
-            gomod2nix.overlays.default
-            (final: prev: {
-              # Здесь можно жестко задать версию Go для всего проекта
-              # go = prev.go;
-              # Используем buildGoApplication из gomod2nix вместо стандартного buildGoModule
-              buildGoApplication = prev.buildGoApplication;
-            })
-          ];
+          overlays = [ gomod2nix.overlays.default ];
+          config.allowUnfree = true;
         };
       in
       {
         packages = rec {
-          # Основное приложение
-          app = pkgs.callPackage ./default.nix { };
+          # --- BACKEND ---
+          backend = pkgs.callPackage ./backend/default.nix { };
 
-          # Docker образ
-          docker = pkgs.callPackage ./docker.nix { inherit app; };
+          # --- FRONTEND (Yarn) ---
+          # Если фронт не нужен — закомментируй следующую строку и раскомментируй null
+          frontend = pkgs.callPackage ./frontend/default.nix { };
+          # frontend = null;
 
-          default = app;
+          # --- FULL APP ---
+          default = pkgs.callPackage ./default.nix {
+            inherit backend frontend;
+          };
+
+          docker = pkgs.callPackage ./backend/docker.nix { app = default; };
         };
 
         devShells.default = pkgs.callPackage ./shell.nix { };

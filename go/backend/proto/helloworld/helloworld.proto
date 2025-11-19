@@ -4,7 +4,7 @@ package helloworld;
 
 // Указываем путь импорта для Go.
 // Это позволяет избежать магии с sed/echo в justfile.
-option go_package = "./proto/helloworld";
+option go_package = "my-go-app/proto/helloworld";
 
 service Greeter {
   rpc SayHello (HelloRequest) returns (HelloReply) {}

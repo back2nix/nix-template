@@ -1,34 +1,25 @@
-{ pkgs, lib, buildGoApplication ? pkgs.buildGoApplication }:
+{ pkgs, lib, backend, frontend ? null }:
 
-let
-  # Читаем версию из git тега или ставим dev, если нет git
-  version = "0.0.1";
-in
-buildGoApplication {
-  pname = "my-go-app";
-  inherit version;
+pkgs.stdenv.mkDerivation {
+  name = "full-app";
+  phases = [ "installPhase" ];
+  buildInputs = [ pkgs.makeWrapper ];
 
-  # Путь к корню исходников
-  src = ./.;
-  pwd = ./.; # Важно для gomod2nix
+  installPhase = ''
+    mkdir -p $out/bin $out/share/web
 
-  # Это тот самый важный момент, чтобы не считать хеши вручную.
-  # Файл gomod2nix.toml генерируется командой `gomod2nix` (см. инструкцию ниже)
-  modules = ./gomod2nix.toml;
+    # 1. Копируем Backend (используем install для установки прав rwx)
+    # Было: cp ${backend}/bin/* $out/bin/
+    install -Dm755 ${backend}/bin/${backend.meta.mainProgram} $out/bin/${backend.meta.mainProgram}
 
-  # Флаги компиляции (убираем отладочную инфу + вшиваем версию)
-  ldflags = [
-    "-s" "-w"
-    "-X main.Version=${version}"
-  ];
+    # 2. Копируем Frontend (если есть)
+    ${lib.optionalString (frontend != null) ''
+      echo "Copying frontend dist..."
+      cp -r ${frontend}/dist $out/share/web/static
+    ''}
 
-  # Если нужно запускать тесты при сборке - true.
-  # Часто выключают для ускорения CI, если тесты гоняются отдельным шагом.
-  doCheck = false;
-
-  meta = with lib; {
-    description = "A generic Go application";
-    license = licenses.mit;
-    mainProgram = "my-go-app"; # Имя бинарника
-  };
+    # 3. Делаем обертку
+    makeWrapper $out/bin/${backend.meta.mainProgram} $out/bin/app-wrapped \
+      --set SERVER_STATIC_DIR $out/share/web/static
+  '';
 }

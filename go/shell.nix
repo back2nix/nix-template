@@ -1,36 +1,35 @@
 { pkgs, mkGoEnv ? pkgs.mkGoEnv, gomod2nix ? pkgs.gomod2nix }:
 
 let
-  goEnv = mkGoEnv { pwd = ./.; };
+  goEnv = mkGoEnv { pwd = ./backend; };
 in
 pkgs.mkShell {
   packages = with pkgs; [
-    # Основные инструменты
+    # --- Go Tools ---
     go
     gomod2nix
     gnumake
-
-    # Линтеры и инструменты
     golangci-lint
     gopls
-    gotools
-    delve
-    go-tools
 
-    # Утилиты
+    # --- Node / Yarn ---
+    nodejs_20
+    yarn          # <--- Теперь используем Yarn
+
+    # --- Protobuf ---
+    protobuf
+    protoc-gen-go
+    protoc-gen-go-grpc
+    grpcurl
+
+    # --- Utils ---
     just
     jq
-    grpcurl # Удобно для ручного тестирования gRPC
-
-    # Protobuf инструменты
-    protobuf             # Компилятор protoc
-    protoc-gen-go        # Генерация структур Go
-    protoc-gen-go-grpc   # Генерация gRPC сервиса
   ];
 
   shellHook = ''
-    echo "🚀 Go gRPC Dev Environment Loaded"
-    echo "Go version: $(go version)"
-    echo "Protoc version: $(protoc --version)"
+    echo "🚀 Dev Env: Go + gRPC + Vue (Yarn)"
+    echo "Go: $(go version)"
+    echo "Yarn: $(yarn --version)"
   '';
 }
