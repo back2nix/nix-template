@@ -1,5 +1,5 @@
 {
-  description = "Micro-Frontend: Shell + Greeter Service (gRPC)";
+  description = "Microservices: Gateway + Services (DDD + Clean Architecture)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -17,27 +17,44 @@
           config.allowUnfree = true;
         };
 
-        buildApp = import ./lib/build.nix;
+        buildService = import ./lib/build-service.nix;
       in
       {
         packages = rec {
-          shell = buildApp {
+          # API Gateway
+          gateway = buildService {
+            inherit pkgs gomod2nix;
+            name = "gateway";
+            srcBackend = ./services/gateway/backend;
+            srcFrontend = ./services/gateway/frontend;
+            port = "8080";
+          };
+
+          # Shell (Host для micro-frontends)
+          shell = buildService {
             inherit pkgs gomod2nix;
             name = "shell";
             srcBackend = ./shell/backend;
             srcFrontend = ./shell/frontend;
-            port = "8080";
+            port = "3000";
           };
 
-          greeter = buildApp {
+          # Greeter Service
+          greeter = buildService {
             inherit pkgs gomod2nix;
             name = "greeter";
             srcBackend = ./services/greeter/backend;
             srcFrontend = ./services/greeter/frontend;
-            port = "8081";
+            port = "50051";
           };
 
-          default = shell;
+          # Собираем все вместе для docker-compose или kubernetes
+          all = pkgs.symlinkJoin {
+            name = "all-services";
+            paths = [ gateway shell greeter ];
+          };
+
+          default = gateway;
         };
 
         devShells.default = pkgs.mkShell {
@@ -53,11 +70,19 @@
             grpcurl
             just
             jq
+            # для миграций БД
+            migrate
+            # для тестирования
+            golangci-lint
           ];
 
           shellHook = ''
-            echo "🛠  Micro-Frontend Dev Environment Loaded"
-            echo "Use 'just' to run commands."
+            echo "🛠  Microservices Dev Environment"
+            echo "Gateway: :8080"
+            echo "Shell:   :3000"
+            echo "Greeter: :50051 (gRPC), :8081 (HTTP)"
+            echo ""
+            echo "Run: just dev-all"
           '';
         };
       }

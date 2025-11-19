@@ -3,7 +3,10 @@ default:
 
 # --- INSTALL & DEPS ---
 
-deps: deps-shell deps-greeter
+deps: deps-gateway deps-shell deps-greeter
+
+deps-gateway:
+    cd services/gateway/backend && go mod tidy && gomod2nix
 
 deps-shell:
     cd shell/frontend && yarn install
@@ -15,29 +18,226 @@ deps-greeter:
 
 # --- CODE GENERATION ---
 
-gen:
+gen-proto:
     cd services/greeter/backend && protoc --go_out=. --go_opt=paths=source_relative \
            --go-grpc_out=. --go-grpc_opt=paths=source_relative \
            proto/helloworld/helloworld.proto
 
-# --- RUNNING ---
+# --- RUNNING (Development) ---
+
+dev-all:
+    @echo "🚀 Starting all services..."
+    @just kill-ports
+    @just dev-gateway &
+    @just dev-shell &
+    @just dev-greeter &
+    @wait
+
+dev-gateway:
+    @echo "🌐 Starting Gateway on :8080..."
+    cd services/gateway/backend && HTTP_PORT=8080 \
+        GREETER_URL=http://localhost:8081 \
+        go run cmd/server/main.go
+
+dev-shell:
+    @echo "🖥  Starting Shell (Host) on :9002..."
+    cd shell/frontend && yarn build
+    cd shell/backend && SERVER_STATIC_DIR=../frontend/dist HTTP_PORT=9002 go run main.go
+
+dev-greeter:
+    @echo "👋 Starting Greeter Service..."
+    cd services/greeter/frontend && yarn build
+    cd services/greeter/backend && SERVER_STATIC_DIR=../frontend/dist \
+        HTTP_PORT=8081 \
+        GRPC_PORT=50051 \
+        go run cmd/server/main.go
+
+# --- INDIVIDUAL SERVICE RUNS ---
+
+run-gateway:
+    cd services/gateway/backend && HTTP_PORT=8080 go run cmd/server/main.go
 
 run-shell:
     @echo "Building Shell Frontend..."
     cd shell/frontend && yarn build
-    @echo "Starting Shell Host on :8080..."
-    cd shell/backend && SERVER_STATIC_DIR=../frontend/dist HTTP_PORT=8080 go run main.go
+    @echo "Starting Shell Host on :9002..."
+    cd shell/backend && SERVER_STATIC_DIR=../frontend/dist HTTP_PORT=9002 go run main.go
 
 run-greeter:
     @echo "Building Greeter Widget..."
     cd services/greeter/frontend && yarn build
     @echo "Starting Greeter Service on :8081 & :50051..."
-    cd services/greeter/backend && SERVER_STATIC_DIR=../frontend/dist HTTP_PORT=8081 go run main.go
+    cd services/greeter/backend && SERVER_STATIC_DIR=../frontend/dist \
+        HTTP_PORT=8081 \
+        GRPC_PORT=50051 \
+        go run cmd/server/main.go
 
-# --- BUILD & TEST ---
+# --- BUILD (Nix) ---
 
 build:
-    nix build .
+    nix build .#all
+
+build-gateway:
+    nix build .#gateway
+
+build-shell:
+    nix build .#shell
+
+build-greeter:
+    nix build .#greeter
+
+# --- TESTING ---
+
+test:
+    @echo "🧪 Running tests..."
+    cd services/gateway/backend && go test ./... || true
+    cd services/greeter/backend && go test ./... || true
+
+test-gateway:
+    cd services/gateway/backend && go test ./...
+
+test-greeter:
+    cd services/greeter/backend && go test ./...
+
+# --- GRPC TESTING ---
 
 grpc-test:
-    grpcurl -plaintext -d '{"name": "JustUser"}' localhost:50051 helloworld.Greeter/SayHello
+    @echo "🔧 Testing gRPC endpoint..."
+    grpcurl -plaintext -d '{"name": "TestUser"}' localhost:50051 helloworld.Greeter/SayHello
+
+grpc-health:
+    @echo "🏥 Checking gRPC health..."
+    grpcurl -plaintext localhost:50051 list
+
+# --- HTTP TESTING ---
+
+http-test-gateway:
+    @echo "🌐 Testing Gateway..."
+    curl -s http://localhost:8080/health | jq
+
+http-test-greeter-via-gateway:
+    @echo "👋 Testing Greeter via Gateway..."
+    curl -s "http://localhost:8080/api/greeter/api/hello?name=World" | jq
+
+http-test-greeter-direct:
+    @echo "👋 Testing Greeter directly..."
+    curl -s "http://localhost:8081/api/hello?name=Direct" | jq
+
+# --- LINTING & FORMATTING ---
+
+lint:
+    @echo "🔍 Running linters..."
+    cd services/gateway/backend && golangci-lint run ./... || true
+    cd services/greeter/backend && golangci-lint run ./... || true
+
+fmt:
+    @echo "✨ Formatting code..."
+    cd services/gateway/backend && go fmt ./...
+    cd services/greeter/backend && go fmt ./...
+    cd shell/backend && go fmt ./...
+
+# --- CLEANUP ---
+
+clean:
+    @echo "🧹 Cleaning build artifacts..."
+    rm -rf result
+    find . -name "dist" -type d -exec rm -rf {} + || true
+    find . -name "node_modules" -type d -exec rm -rf {} + || true
+    cd services/gateway/backend && go clean
+    cd services/greeter/backend && go clean
+    cd shell/backend && go clean
+
+clean-all: clean
+    @echo "🧹 Removing all generated files..."
+    rm -rf services/gateway/backend/gomod2nix.toml
+    rm -rf services/greeter/backend/gomod2nix.toml
+    rm -rf shell/backend/gomod2nix.toml
+
+# --- DOCKER (Optional) ---
+
+docker-build:
+    @echo "🐳 Building Docker images..."
+    docker-compose build
+
+docker-up:
+    @echo "🐳 Starting services in Docker..."
+    docker-compose up -d
+
+docker-down:
+    @echo "🐳 Stopping Docker services..."
+    docker-compose down
+
+docker-logs:
+    docker-compose logs -f
+
+# --- UTILITIES ---
+
+ps:
+    @echo "📊 Running processes:"
+    @ps aux | grep -E "(gateway|greeter|shell)" | grep -v grep || echo "No services running"
+
+kill-ports:
+    @echo "💀 Killing processes on our ports..."
+    @lsof -ti:8080 | xargs kill -9 2>/dev/null || true
+    @lsof -ti:8081 | xargs kill -9 2>/dev/null || true
+    @lsof -ti:9002 | xargs kill -9 2>/dev/null || true
+    @lsof -ti:50051 | xargs kill -9 2>/dev/null || true
+    @echo "✅ Ports cleared"
+
+kill-all: kill-ports
+    @echo "💀 Killing all service processes..."
+    @pkill -f "go run.*gateway" || true
+    @pkill -f "go run.*greeter" || true
+    @pkill -f "go run.*shell" || true
+    @echo "✅ All services stopped"
+
+restart: kill-all
+    @sleep 1
+    @just dev-all
+
+# --- DEVELOPMENT HELPERS ---
+
+watch-gateway:
+    cd services/gateway/backend && find . -name "*.go" | entr -r go run cmd/server/main.go
+
+watch-greeter:
+    cd services/greeter/backend && find . -name "*.go" | entr -r go run cmd/server/main.go
+
+logs-gateway:
+    tail -f /tmp/gateway.log || echo "No gateway logs"
+
+logs-greeter:
+    tail -f /tmp/greeter.log || echo "No greeter logs"
+
+# --- INFO ---
+
+info:
+    @echo "📦 Project Structure:"
+    @echo ""
+    @echo "Services:"
+    @echo "  - Gateway:   :8080 (HTTP)"
+    @echo "  - Shell:     :9002 (HTTP)"
+    @echo "  - Greeter:   :8081 (HTTP), :50051 (gRPC)"
+    @echo ""
+    @echo "Endpoints:"
+    @echo "  - http://localhost:8080/health         (Gateway health)"
+    @echo "  - http://localhost:8080/api/greeter/*  (Proxy to Greeter)"
+    @echo "  - http://localhost:8081/api/hello      (Greeter REST)"
+    @echo "  - http://localhost:8081/health         (Greeter health)"
+    @echo "  - http://localhost:9002                (Shell/Host)"
+    @echo ""
+    @echo "Commands:"
+    @echo "  just deps          - Install all dependencies"
+    @echo "  just dev-all       - Start all services"
+    @echo "  just test          - Run all tests"
+    @echo "  just grpc-test     - Test gRPC endpoint"
+    @echo "  just build         - Build with Nix"
+    @echo "  just clean         - Clean artifacts"
+
+# --- QUICK START ---
+
+setup: deps gen-proto
+    @echo "✅ Project setup complete!"
+    @just info
+
+start: dev-all
