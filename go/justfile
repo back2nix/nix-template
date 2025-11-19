@@ -1,45 +1,43 @@
 default:
     @just --list
 
-# --- BACKEND ---
+# --- INSTALL & DEPS ---
+
+deps: deps-shell deps-greeter
+
+deps-shell:
+    cd shell/frontend && yarn install
+    cd shell/backend && go mod tidy && gomod2nix
+
+deps-greeter:
+    cd services/greeter/frontend && yarn install
+    cd services/greeter/backend && go mod tidy && gomod2nix
+
+# --- CODE GENERATION ---
 
 gen:
-    cd backend && protoc --go_out=. --go_opt=paths=source_relative \
+    cd services/greeter/backend && protoc --go_out=. --go_opt=paths=source_relative \
            --go-grpc_out=. --go-grpc_opt=paths=source_relative \
            proto/helloworld/helloworld.proto
 
-run-back:
-    cd backend && go run main.go
+# --- RUNNING ---
 
-deps-back:
-    cd backend && go mod tidy && gomod2nix
+run-shell:
+    @echo "Building Shell Frontend..."
+    cd shell/frontend && yarn build
+    @echo "Starting Shell Host on :8080..."
+    cd shell/backend && SERVER_STATIC_DIR=../frontend/dist HTTP_PORT=8080 go run main.go
 
-# --- FRONTEND (Yarn) ---
+run-greeter:
+    @echo "Building Greeter Widget..."
+    cd services/greeter/frontend && yarn build
+    @echo "Starting Greeter Service on :8081 & :50051..."
+    cd services/greeter/backend && SERVER_STATIC_DIR=../frontend/dist HTTP_PORT=8081 go run main.go
 
-# Установка зависимостей (создаст/обновит yarn.lock)
-deps-front:
-    cd frontend && yarn install
+# --- BUILD & TEST ---
 
-# Запуск dev-сервера
-dev-front:
-    cd frontend && yarn dev
-
-# Сборка статики вручную
-build-front:
-    cd frontend && yarn build
-
-# --- FULL APP ---
-
-# Запуск всего (сначала билдит фронт, потом запускает бэк)
-run:
-    @echo "📦 Building frontend..."
-    cd frontend && yarn build
-    @echo "🚀 Starting Backend..."
-    cd backend && SERVER_STATIC_DIR=../frontend/dist go run main.go
-
-# Сборка через Nix
 build:
     nix build .
 
-grcp-curl:
-  grpcurl -plaintext -d '{"name": "Developer"}' localhost:50051 helloworld.Greeter/SayHello
+grpc-test:
+    grpcurl -plaintext -d '{"name": "JustUser"}' localhost:50051 helloworld.Greeter/SayHello
