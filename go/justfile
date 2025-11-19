@@ -42,7 +42,7 @@ dev-gateway:
 dev-shell:
     @echo "🖥  Starting Shell (Host) on :9002..."
     cd shell/frontend && yarn build
-    cd shell/backend && SERVER_STATIC_DIR=../frontend/dist HTTP_PORT=9002 go run main.go
+    cd shell/backend && SERVER_STATIC_DIR=../frontend/dist HTTP_PORT=9002 go run cmd/server/main.go
 
 dev-greeter:
     @echo "👋 Starting Greeter Service..."
@@ -61,7 +61,7 @@ run-shell:
     @echo "Building Shell Frontend..."
     cd shell/frontend && yarn build
     @echo "Starting Shell Host on :9002..."
-    cd shell/backend && SERVER_STATIC_DIR=../frontend/dist HTTP_PORT=9002 go run main.go
+    cd shell/backend && SERVER_STATIC_DIR=../frontend/dist HTTP_PORT=9002 go run cmd/server/main.go
 
 run-greeter:
     @echo "Building Greeter Widget..."

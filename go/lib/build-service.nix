@@ -1,4 +1,4 @@
-{ pkgs, gomod2nix, name, srcBackend, srcFrontend, port }:
+{ pkgs, gomod2nix, name, srcBackend, srcFrontend, port, yarnHash }:
 
 let
   # Backend (Go)
@@ -19,23 +19,32 @@ let
   };
 
   # Frontend (Vue.js)
-  frontend = pkgs.stdenv.mkDerivation {
+  frontend = pkgs.mkYarnPackage {
     pname = "${name}-frontend";
     version = "0.1.0";
     src = srcFrontend;
 
-    buildInputs = [ pkgs.nodejs_20 pkgs.yarn ];
+    offlineCache = pkgs.fetchYarnDeps {
+      yarnLock = srcFrontend + "/yarn.lock";
+      hash = yarnHash;
+    };
+
+    configurePhase = ''
+      export HOME=$(mktemp -d)
+      cp -r $node_modules node_modules
+      chmod +w node_modules
+    '';
 
     buildPhase = ''
-      export HOME=$TMPDIR
-      yarn install --frozen-lockfile
-      yarn build
+      yarn --offline build
     '';
 
     installPhase = ''
       mkdir -p $out/static
       cp -r dist/* $out/static/
     '';
+
+    distPhase = "true";
   };
 
 in pkgs.symlinkJoin {

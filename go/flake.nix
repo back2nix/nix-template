@@ -18,15 +18,17 @@
         };
 
         buildService = import ./lib/build-service.nix;
+
+        # Для gateway - только backend
+        buildBackendOnly = import ./lib/build-backend-only.nix;
       in
       {
         packages = rec {
-          # API Gateway
-          gateway = buildService {
+          # API Gateway (только backend)
+          gateway = buildBackendOnly {
             inherit pkgs gomod2nix;
             name = "gateway";
             srcBackend = ./services/gateway/backend;
-            srcFrontend = ./services/gateway/frontend;
             port = "8080";
           };
 
@@ -37,6 +39,7 @@
             srcBackend = ./shell/backend;
             srcFrontend = ./shell/frontend;
             port = "3000";
+            yarnHash = "sha256-1/c8dhDK/63cUSJlB0GAn9aCSeejZrMb/3yq5EZRak0="; # hash для shell
           };
 
           # Greeter Service
@@ -46,6 +49,7 @@
             srcBackend = ./services/greeter/backend;
             srcFrontend = ./services/greeter/frontend;
             port = "50051";
+            yarnHash = "sha256-1/c8dhDK/63cUSJlB0GAn9aCSeejZrMb/3yq5EZRak0="; # hash для greeter
           };
 
           # Собираем все вместе для docker-compose или kubernetes
