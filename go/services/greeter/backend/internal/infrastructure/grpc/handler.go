@@ -2,9 +2,9 @@ package grpc
 
 import (
 	"context"
-	"log"
 
 	"greeter/internal/application"
+	"greeter/pkg/logger"
 	pb "greeter/proto/helloworld"
 
 	"google.golang.org/grpc"
@@ -16,18 +16,21 @@ type server struct {
 	useCase *application.GreeterUseCase
 }
 
-func NewServer(useCase *application.GreeterUseCase) *grpc.Server {
-	s := grpc.NewServer()
+// NewServer теперь принимает опции gRPC для внедрения интерцепторов (Observability)
+func NewServer(useCase *application.GreeterUseCase, opts ...grpc.ServerOption) *grpc.Server {
+	s := grpc.NewServer(opts...)
 	pb.RegisterGreeterServer(s, &server{useCase: useCase})
 	reflection.Register(s)
 	return s
 }
 
 func (s *server) SayHello(ctx context.Context, in *pb.HelloRequest) (*pb.HelloReply, error) {
-	log.Printf("[gRPC] Received: %v", in.GetName())
+	// Используем slog вместо стандартного log
+	logger.Info(ctx, "gRPC SayHello called", "name", in.GetName())
 
 	message, err := s.useCase.GreetUser(ctx, in.GetName())
 	if err != nil {
+		logger.Error(ctx, "UseCase error", "error", err)
 		return nil, err
 	}
 

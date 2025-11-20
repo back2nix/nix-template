@@ -3,13 +3,16 @@ package http
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"net/http"
 	"path/filepath"
 
 	"greeter/internal/application"
 	"greeter/internal/config"
 	"greeter/internal/middleware"
+	"greeter/pkg/logger"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 type Server struct {
@@ -26,14 +29,24 @@ func NewServer(cfg *config.Config, useCase *application.GreeterUseCase) *Server 
 		config:  cfg,
 	}
 
-	// API routes
-	mux.HandleFunc("/api/hello", s.HandleGreet)
-	mux.HandleFunc("/health", s.HandleHealth)
+	// --- OBSERVABILITY ---
+	// 1. Metrics Endpoint (для VictoriaMetrics)
+	mux.Handle("/metrics", promhttp.Handler())
 
-	// Static files
+	// 2. Tracing Middleware (Оборачиваем хендлеры)
+	// Обертка добавляет Span в трейс
+	handleGreet := http.HandlerFunc(s.HandleGreet)
+	mux.Handle("/api/hello", otelhttp.NewHandler(handleGreet, "HTTP /api/hello"))
+
+	handleHealth := http.HandlerFunc(s.HandleHealth)
+	mux.Handle("/health", otelhttp.NewHandler(handleHealth, "HTTP /health"))
+
+	// --- STATIC FILES ---
 	if cfg.Server.StaticDir != "" {
-		log.Printf("📁 Serving static files from: %s", cfg.Server.StaticDir)
+		logger.Info(context.Background(), "📁 Serving static files", "dir", cfg.Server.StaticDir)
 		fs := http.FileServer(http.Dir(cfg.Server.StaticDir))
+
+		// Для статики трейсинг обычно не нужен, но можно добавить при желании
 		mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/" {
 				http.ServeFile(w, r, filepath.Join(cfg.Server.StaticDir, "index.html"))
@@ -43,7 +56,8 @@ func NewServer(cfg *config.Config, useCase *application.GreeterUseCase) *Server 
 		}))
 	}
 
-	// Оборачиваем в CORS middleware
+	// --- GLOBAL MIDDLEWARE ---
+	// CORS (можно тоже обернуть в otelhttp.NewHandler, если нужно трейсить весь пайплайн)
 	handler := middleware.CORS(mux)
 
 	s.server = &http.Server{
@@ -55,13 +69,23 @@ func NewServer(cfg *config.Config, useCase *application.GreeterUseCase) *Server 
 }
 
 func (s *Server) HandleGreet(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Логируем событие (trace_id добавится автоматически через middleware логгера,
+	// если мы его напишем, или можно вытащить вручную. Пока просто структурный лог)
+	logger.Info(ctx, "Handling Greet Request",
+		"method", r.Method,
+		"url", r.URL.String(),
+	)
+
 	name := r.URL.Query().Get("name")
 	if name == "" {
 		name = "World"
 	}
 
-	message, err := s.useCase.GreetUser(r.Context(), name)
+	message, err := s.useCase.GreetUser(ctx, name)
 	if err != nil {
+		logger.Error(ctx, "Greeting failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

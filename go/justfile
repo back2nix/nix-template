@@ -93,6 +93,14 @@ restart: kill-all
     @sleep 1
     @just dev-all
 
+up-obs:
+    @echo "🔭 Starting Observability Stack (VM, Loki, Tempo, Grafana)..."
+    cd deployments && docker-compose -f compose-observability.yaml up -d
+    @echo "📊 Grafana: http://localhost:3001"
+
+down-obs:
+    cd deployments && docker-compose -f compose-observability.yaml down
+
 # --- DEVELOPMENT HELPERS ---
 
 watch-gateway:
@@ -170,3 +178,4 @@ start: dev-all
 
 check:
   nix flake check -L
+

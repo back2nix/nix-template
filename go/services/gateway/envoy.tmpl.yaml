@@ -11,12 +11,37 @@ static_resources:
         typed_config:
           "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
           stat_prefix: ingress_http
+
+          # --- TRACING (Zipkin -> Tempo) ---
+          generate_request_id: true
+          tracing:
+            provider:
+              name: envoy.tracers.zipkin
+              typed_config:
+                "@type": type.googleapis.com/envoy.config.trace.v3.ZipkinConfig
+                collector_cluster: tempo_zipkin
+                collector_endpoint: "/api/v2/spans"
+                shared_span_context: false
+                collector_endpoint_version: HTTP_JSON
+
+          # --- ACCESS LOGS (JSON format for Loki) ---
           access_log:
           - name: envoy.access_loggers.stdout
             typed_config:
               "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+              log_format:
+                json_format:
+                  start_time: "%START_TIME%"
+                  method: "%REQ(:METHOD)%"
+                  path: "%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%"
+                  protocol: "%PROTOCOL%"
+                  response_code: "%RESPONSE_CODE%"
+                  duration: "%DURATION%"
+                  x_request_id: "%REQ(X-REQUEST-ID)%"
+                  upstream_cluster: "%UPSTREAM_CLUSTER%"
+                  upstream_host: "%UPSTREAM_HOST%"
+                  user_agent: "%REQ(USER-AGENT)%"
 
-          # --- Local Rate Limit (Global for instance, simple emulation of previous logic) ---
           common_http_protocol_options:
             idle_timeout: 60s
 
@@ -40,6 +65,9 @@ static_resources:
                   cluster: greeter_service
                   prefix_rewrite: "/"
                   timeout: 30s
+                # Добавляем декоратор для трейсинга
+                decorator:
+                  operation: checkGreeter
 
               # --- Route: Health Check ---
               - match:
@@ -53,7 +81,7 @@ static_resources:
                       key: "Content-Type"
                       value: "application/json"
 
-              # --- Route: Dashboard (Simplified) ---
+              # --- Route: Dashboard ---
               - match:
                   path: "/"
                 direct_response:
@@ -64,8 +92,7 @@ static_resources:
                       <html>
                       <head><title>Envoy Gateway</title></head>
                       <body style="font-family: monospace; padding: 20px;">
-                          <h1>🚀 Envoy API Gateway</h1>
-                          <p>Backend replaced with Envoy Proxy.</p>
+                          <h1>🚀 Envoy API Gateway + Observability</h1>
                           <ul>
                               <li><a href="/health">/health</a></li>
                               <li><a href="/api/greeter/api/hello?name=Envoy">/api/greeter/api/hello</a></li>
@@ -78,32 +105,38 @@ static_resources:
                       value: "text/html; charset=utf-8"
 
           http_filters:
-          # --- Filter: CORS ---
           - name: envoy.filters.http.cors
             typed_config:
               "@type": type.googleapis.com/envoy.extensions.filters.http.cors.v3.Cors
 
-          # --- Filter: Rate Limit (Local) ---
-          - name: envoy.filters.http.local_ratelimit
+          - name: envoy.filters.http.router
             typed_config:
-              "@type": type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit
-              stat_prefix: http_local_rate_limiter
-              token_bucket:
-                max_tokens: 100
-                tokens_per_fill: 100
-                fill_interval: 60s
-              filter_enabled:
-                runtime_key: local_rate_limit_enabled
-                default_value:
-                  numerator: 100
-                  denominator: HUNDRED
-              filter_enforced:
-                runtime_key: local_rate_limit_enforced
-                default_value:
-                  numerator: 100
-                  denominator: HUNDRED
+              "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
 
-          # --- Filter: Router (Must be last) ---
+  # --- METRICS LISTENER (Prometheus format) ---
+  - name: stats_listener
+    address:
+      socket_address:
+        address: 0.0.0.0
+        port_value: 9901
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: stats
+          route_config:
+            name: stats_route
+            virtual_hosts:
+            - name: stats
+              domains: ["*"]
+              routes:
+              - match:
+                  prefix: "/stats/prometheus"
+                route:
+                  cluster: service_stats
+                  prefix_rewrite: "/stats/prometheus"
+          http_filters:
           - name: envoy.filters.http.router
             typed_config:
               "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
@@ -112,7 +145,6 @@ static_resources:
   - name: greeter_service
     connect_timeout: 5s
     type: LOGICAL_DNS
-    # Comment: Envoy will resolve this hostname to an IP
     load_assignment:
       cluster_name: greeter_service
       endpoints:
@@ -122,3 +154,35 @@ static_resources:
               socket_address:
                 address: ${GREETER_HOST}
                 port_value: ${GREETER_PORT}
+
+  # --- CLUSTER: Tempo (Zipkin API) ---
+  - name: tempo_zipkin
+    connect_timeout: 1s
+    type: STRICT_DNS
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: tempo_zipkin
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                # Важно: если запускаете в Docker, используйте host.docker.internal или имя сервиса
+                # Для локального запуска Envoy -> локальный Tempo:
+                address: 127.0.0.1
+                port_value: 9411
+
+  # --- CLUSTER: Stats Loopback (For /stats/prometheus) ---
+  - name: service_stats
+    connect_timeout: 0.25s
+    type: STATIC
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: service_stats
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+               socket_address:
+                 address: 127.0.0.1
+                 port_value: 9901

@@ -1,0 +1,63 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 0,
+  "links": [],
+  "panels": [
+    {
+      "title": "Gateway RPS (Envoy)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+          "expr": "rate(envoy_http_downstream_rq_total[1m])",
+          "legendFormat": "{{ envoy_response_code_class }}"
+        }
+      ]
+    },
+    {
+      "title": "Go Greeter Memory Usage",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+          "expr": "go_memstats_alloc_bytes{job=\"greeter-service\"}",
+          "legendFormat": "Allocated"
+        }
+      ]
+    },
+    {
+      "title": "Go Goroutines",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+          "expr": "go_goroutines{job=\"greeter-service\"}"
+        }
+      ]
+    },
+    {
+      "title": "Loki Logs (Errors)",
+      "type": "logs",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 12 },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "Loki" },
+          "expr": "{service=\"greeter-service\"} |= \"error\""
+        }
+      ]
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 38,
+  "tags": ["observability"],
+  "templating": { "list": [] },
+  "time": { "from": "now-15m", "to": "now" },
+  "title": "Microservices Overview",
+  "uid": "microservices-overview",
+  "version": 1
+}
