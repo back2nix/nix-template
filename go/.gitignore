@@ -26,3 +26,7 @@ vendor/
 
 # Logs
 *.log
+
+# Symlinks to pkg
+services/*/backend/pkg
+shell/backend/pkg

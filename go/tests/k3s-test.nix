@@ -33,7 +33,6 @@ let
 
   # 4. Kubernetes манифесты
   # Используем hostNetwork: true, чтобы избежать проблем с CNI/DNS в песочнице
-  # Используем command: [...] чтобы переопределить entrypoint и задать порты через ENV
   k8sManifests = pkgs.writeText "app-deployment.yaml" ''
     ---
     apiVersion: apps/v1
@@ -51,8 +50,11 @@ let
             imagePullPolicy: Never
             command: ["/bin/greeter-backend"]
             env:
-            - { name: HTTP_PORT, value: "8081" }
-            - { name: GRPC_PORT, value: "50051" }
+            - { name: APP_ENV, value: "prod" }
+            - { name: GREETER_HTTP_PORT, value: "8081" }
+            - { name: GREETER_GRPC_PORT, value: "50051" }
+            - { name: LOG_LEVEL, value: "info" }
+            - { name: LOG_FORMAT, value: "json" }
     ---
     apiVersion: apps/v1
     kind: Deployment
@@ -69,7 +71,8 @@ let
             imagePullPolicy: Never
             command: ["/bin/shell-backend"]
             env:
-            - { name: HTTP_PORT, value: "9002" }
+            - { name: APP_ENV, value: "prod" }
+            - { name: SHELL_HTTP_PORT, value: "9002" }
     ---
     apiVersion: apps/v1
     kind: Deployment
@@ -86,8 +89,11 @@ let
             imagePullPolicy: Never
             command: ["/bin/gateway-backend"]
             env:
-            - { name: HTTP_PORT, value: "8080" }
+            - { name: APP_ENV, value: "prod" }
+            - { name: GATEWAY_HTTP_PORT, value: "8080" }
             - { name: GREETER_URL, value: "http://127.0.0.1:8081" }
+            - { name: LOG_LEVEL, value: "info" }
+            - { name: LOG_FORMAT, value: "json" }
   '';
 
 in pkgs.testers.nixosTest {
@@ -137,21 +143,18 @@ in pkgs.testers.nixosTest {
     machine.wait_until_succeeds("kubectl get pods | grep greeter | grep Running")
     machine.wait_until_succeeds("kubectl get pods | grep shell | grep Running")
 
-    # 5. Проверка Health Check Gateway
+    # В конце testScript замени проверку health на:
+
+    # 5. Проверка Health Check Gateway (с ретраями)
     print("Checking Gateway Health...")
-    machine.succeed("curl -sSf http://localhost:8080/health | grep 'ok'")
+    machine.wait_until_succeeds("curl -sSf http://localhost:8080/health | grep 'ok'", timeout=30)
 
     # 6. Проверка сквозного запроса (Proxy)
     print("Checking Gateway -> Greeter proxy...")
-
-    # Выполняем запрос и сохраняем вывод
-    # Используем -s (silent), чтобы curl не спамил прогрессом
     output = machine.succeed("curl -s 'http://localhost:8080/api/greeter/api/hello?name=NixOS'")
 
-    # Выводим ответ в лог для отладки
     print(f"\n========= RESPONSE FROM GATEWAY =========\n{output}\n=========================================\n")
 
-    # Проверяем содержимое ответа
     assert "Hello" in output and "NixOS" in output
 
     print("✅ All integration tests passed!")

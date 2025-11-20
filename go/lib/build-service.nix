@@ -1,11 +1,23 @@
 { pkgs, gomod2nix, name, srcBackend, srcFrontend, port, yarnHash }:
 
 let
+  # Объединяем backend и pkg в один источник
+  combinedSrc = pkgs.runCommand "combined-src" {} ''
+    mkdir -p $out
+
+    # Копируем backend
+    cp -r ${srcBackend}/* $out/
+
+    # Копируем pkg в корень (где go.mod)
+    mkdir -p $out/pkg
+    cp -r ${../pkg}/* $out/pkg/
+  '';
+
   # Backend (Go)
   backend = pkgs.buildGoApplication {
     pname = "${name}-backend";
     version = "0.1.0";
-    src = srcBackend;
+    src = combinedSrc;
     modules = srcBackend + "/gomod2nix.toml";
 
     CGO_ENABLED = 0;

@@ -4,12 +4,9 @@ go 1.25.0
 
 toolchain go1.25.3
 
-replace greeter/pkg/config => ../../../pkg/config
-
 require (
 	google.golang.org/grpc v1.77.0
 	google.golang.org/protobuf v1.36.10
-	greeter/pkg/config v0.0.0
 )
 
 require (
