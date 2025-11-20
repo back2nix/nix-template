@@ -95,6 +95,18 @@
               echo "🐍 Python Dev Environment (uv)"
               echo "Python: $(python --version)"
               echo "uv: $(uv --version)"
+
+              # Автоматически создать и активировать .venv
+              if [ ! -d .venv ]; then
+                echo "Creating virtual environment..."
+                uv venv
+              fi
+
+              echo "Activating virtual environment..."
+              source .venv/bin/activate
+
+              # Синхронизировать зависимости
+              uv sync
             '';
           };
         }
