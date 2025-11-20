@@ -2,56 +2,102 @@
   description = "Python project with uv";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
-    flake-utils.url = "github:numtide/flake-utils";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+
+    pyproject-nix = {
+      url = "github:pyproject-nix/pyproject.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
+    uv2nix = {
+      url = "github:pyproject-nix/uv2nix";
+      inputs.pyproject-nix.follows = "pyproject-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
+    pyproject-build-systems = {
+      url = "github:pyproject-nix/build-system-pkgs";
+      inputs.pyproject-nix.follows = "pyproject-nix";
+      inputs.uv2nix.follows = "uv2nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
-    flake-utils.lib.eachDefaultSystem (system:
-      let
-        pkgs = import nixpkgs {
-          inherit system;
-          config.allowUnfree = true; # Нужно для CUDA, если понадобится
-        };
+  outputs = { self, nixpkgs, uv2nix, pyproject-nix, pyproject-build-systems }:
+    let
+      inherit (nixpkgs) lib;
 
-        # Библиотеки, которые нужны python-пакетам (через LD_LIBRARY_PATH)
-        # Сюда добавляем libsndfile, cuda, ffmpeg если нужно
-        libs = with pkgs; [
-          stdenv.cc.cc.lib
-          zlib
-          glib
-          # libsndfile  # Для аудио
-          # ffmpeg      # Для обработки медиа
-        ];
-      in
-      {
-        devShells.default = pkgs.mkShell {
-          buildInputs = with pkgs; [
-            # Основные инструменты
-            python311
-            uv
-            just
+      forAllSystems = lib.genAttrs [
+        "x86_64-linux"
+      ];
+    in
+    {
+      packages = forAllSystems (system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
 
-            # Системные зависимости (если нужны хедеры при сборке)
-            # pkg-config
-          ];
+          python = pkgs.python311;
 
-          # Настройка переменных окружения
-          env = {
-            # Заставляем uv использовать python из nix store,
-            # чтобы не качал свой toolchain, который может конфликтовать с glibc
-            UV_PYTHON = "${pkgs.python311}/bin/python";
+          workspace = uv2nix.lib.workspace.loadWorkspace { workspaceRoot = ./.; };
 
-            # Указываем путь к библиотекам для динамической линковки
-            LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath libs;
+          overlay = workspace.mkPyprojectOverlay {
+            sourcePreference = "wheel";
           };
 
-          shellHook = ''
-            echo "🐍 Python Dev Environment (uv)"
-            echo "Python: $(python --version)"
-            echo "uv: $(uv --version)"
-          '';
+          pythonSet = (pkgs.callPackage pyproject-nix.build.packages {
+            inherit python;
+          }).overrideScope (
+            lib.composeManyExtensions [
+              pyproject-build-systems.overlays.default
+              overlay
+            ]
+          );
+
+        in
+        {
+          default = pythonSet.mkVirtualEnv "my-python-project-env" workspace.deps.default;
+        }
+      );
+
+      apps = forAllSystems (system: {
+        default = {
+          type = "app";
+          program = "${self.packages.${system}.default}/bin/my-python-project";
         };
-      }
-    );
+      });
+
+      devShells = forAllSystems (system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+          python = pkgs.python311;
+
+          libs = with pkgs; [
+            stdenv.cc.cc.lib
+            zlib
+            glib
+          ];
+
+        in
+        {
+          default = pkgs.mkShell {
+            packages = [
+              python
+              pkgs.uv
+              pkgs.just
+            ];
+
+            env = {
+              UV_PYTHON = "${python}/bin/python";
+              LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath libs;
+            };
+
+            shellHook = ''
+              echo "🐍 Python Dev Environment (uv)"
+              echo "Python: $(python --version)"
+              echo "uv: $(uv --version)"
+            '';
+          };
+        }
+      );
+    };
 }

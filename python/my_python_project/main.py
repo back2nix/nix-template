@@ -7,7 +7,6 @@ def main():
     print(f"NumPy version: {np.__version__}")
     print(f"Current Directory: {os.getcwd()}")
 
-    # Проверка переменных из .env (если python-dotenv установлен)
     try:
         from dotenv import load_dotenv
         load_dotenv()
