@@ -8,6 +8,8 @@ let
     src = srcBackend;
     modules = srcBackend + "/gomod2nix.toml";
 
+    CGO_ENABLED = 0;
+
     buildPhase = ''
       go build -o backend cmd/server/main.go
     '';

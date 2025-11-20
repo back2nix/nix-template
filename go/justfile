@@ -241,3 +241,7 @@ setup: deps gen-proto
     @just info
 
 start: dev-all
+
+
+check:
+  nix flake check -L

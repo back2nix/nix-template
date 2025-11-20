@@ -18,49 +18,65 @@
         };
 
         buildService = import ./lib/build-service.nix;
-
-        # Для gateway - только backend
         buildBackendOnly = import ./lib/build-backend-only.nix;
-      in
-      {
-        packages = rec {
-          # API Gateway (только backend)
-          gateway = buildBackendOnly {
-            inherit pkgs gomod2nix;
-            name = "gateway";
-            srcBackend = ./services/gateway/backend;
-            port = "8080";
-          };
 
-          # Shell (Host для micro-frontends)
-          shell = buildService {
-            inherit pkgs gomod2nix;
-            name = "shell";
-            srcBackend = ./shell/backend;
-            srcFrontend = ./shell/frontend;
-            port = "3000";
-            yarnHash = "sha256-1/c8dhDK/63cUSJlB0GAn9aCSeejZrMb/3yq5EZRak0="; # hash для shell
-          };
+        # --- ОПРЕДЕЛЯЕМ ПАКЕТЫ ЗДЕСЬ (в let блоке) ---
+        # Это позволяет безопасно передавать их и в outputs.packages, и в outputs.checks
 
-          # Greeter Service
-          greeter = buildService {
-            inherit pkgs gomod2nix;
-            name = "greeter";
-            srcBackend = ./services/greeter/backend;
-            srcFrontend = ./services/greeter/frontend;
-            port = "50051";
-            yarnHash = "sha256-1/c8dhDK/63cUSJlB0GAn9aCSeejZrMb/3yq5EZRak0="; # hash для greeter
-          };
-
-          # Собираем все вместе для docker-compose или kubernetes
-          all = pkgs.symlinkJoin {
-            name = "all-services";
-            paths = [ gateway shell greeter ];
-          };
-
-          default = gateway;
+        gatewayPkg = buildBackendOnly {
+          inherit pkgs gomod2nix;
+          name = "gateway";
+          srcBackend = ./services/gateway/backend;
+          port = "8080";
         };
 
+        shellPkg = buildService {
+          inherit pkgs gomod2nix;
+          name = "shell";
+          srcBackend = ./shell/backend;
+          srcFrontend = ./shell/frontend;
+          port = "3000";
+          yarnHash = "sha256-1/c8dhDK/63cUSJlB0GAn9aCSeejZrMb/3yq5EZRak0=";
+        };
+
+        greeterPkg = buildService {
+          inherit pkgs gomod2nix;
+          name = "greeter";
+          srcBackend = ./services/greeter/backend;
+          srcFrontend = ./services/greeter/frontend;
+          port = "50051";
+          yarnHash = "sha256-1/c8dhDK/63cUSJlB0GAn9aCSeejZrMb/3yq5EZRak0=";
+        };
+
+        # Группируем их в объект для удобства передачи
+        projectPackages = {
+          gateway = gatewayPkg;
+          shell = shellPkg;
+          greeter = greeterPkg;
+        };
+
+      in
+      {
+        # --- PACKAGES ---
+        packages = projectPackages // {
+          # Собираем все вместе
+          all = pkgs.symlinkJoin {
+            name = "all-services";
+            paths = [ gatewayPkg shellPkg greeterPkg ];
+          };
+
+          default = gatewayPkg;
+        };
+
+        # --- CHECKS (TESTS) ---
+        checks = {
+          k3s-integration = import ./tests/k3s-test.nix {
+            inherit system pkgs;
+            packages = projectPackages; # Теперь переменная доступна
+          };
+        };
+
+        # --- DEV SHELL ---
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
             go
@@ -78,6 +94,9 @@
             migrate
             # для тестирования
             golangci-lint
+            # утилиты для k8s (полезно в dev shell)
+            kubectl
+            k3s
           ];
 
           shellHook = ''
@@ -87,6 +106,7 @@
             echo "Greeter: :50051 (gRPC), :8081 (HTTP)"
             echo ""
             echo "Run: just dev-all"
+            echo "Test: nix flake check -L"
           '';
         };
       }
