@@ -137,8 +137,6 @@ in pkgs.testers.nixosTest {
     machine.wait_until_succeeds("kubectl get pods | grep greeter | grep Running")
     machine.wait_until_succeeds("kubectl get pods | grep shell | grep Running")
 
-    machine.sleep(5)
-
     # 5. Проверка Health Check Gateway
     print("Checking Gateway Health...")
     machine.succeed("curl -sSf http://localhost:8080/health | grep 'ok'")
