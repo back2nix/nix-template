@@ -3,9 +3,9 @@ package config
 import "os"
 
 type Config struct {
-	HTTPPort   string
-	GRPCPort   string
-	StaticDir  string
+	HTTPPort  string
+	GRPCPort  string
+	StaticDir string
 }
 
 func Load() *Config {
