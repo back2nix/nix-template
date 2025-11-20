@@ -1,8 +1,8 @@
 {
-  description = "Microservices: Gateway + Services (DDD + Clean Architecture)";
+  description = "Microservices: Gateway (Envoy) + Services (Go/DDD)";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
     flake-utils.url = "github:numtide/flake-utils";
     gomod2nix.url = "github:nix-community/gomod2nix";
     gomod2nix.inputs.nixpkgs.follows = "nixpkgs";
@@ -18,15 +18,15 @@
         };
 
         buildService = import ./lib/build-service.nix;
-        buildBackendOnly = import ./lib/build-backend-only.nix;
+        # buildBackendOnly более не нужен для Gateway, но может пригодиться для других
+        buildEnvoyGateway = import ./lib/build-envoy-gateway.nix;
 
-        # --- ОПРЕДЕЛЯЕМ ПАКЕТЫ ЗДЕСЬ (в let блоке) ---
-        # Это позволяет безопасно передавать их и в outputs.packages, и в outputs.checks
+        # --- SERVICES ---
 
-        gatewayPkg = buildBackendOnly {
-          inherit pkgs gomod2nix;
+        # Gateway теперь собирается через Envoy
+        gatewayPkg = buildEnvoyGateway {
+          inherit pkgs;
           name = "gateway";
-          srcBackend = ./services/gateway/backend;
           port = "8080";
         };
 
@@ -48,7 +48,6 @@
           yarnHash = "sha256-1/c8dhDK/63cUSJlB0GAn9aCSeejZrMb/3yq5EZRak0=";
         };
 
-        # Группируем их в объект для удобства передачи
         projectPackages = {
           gateway = gatewayPkg;
           shell = shellPkg;
@@ -59,20 +58,18 @@
       {
         # --- PACKAGES ---
         packages = projectPackages // {
-          # Собираем все вместе
           all = pkgs.symlinkJoin {
             name = "all-services";
             paths = [ gatewayPkg shellPkg greeterPkg ];
           };
-
           default = gatewayPkg;
         };
 
-        # --- CHECKS (TESTS) ---
+        # --- CHECKS ---
         checks = {
           k3s-integration = import ./tests/k3s-test.nix {
             inherit system pkgs;
-            packages = projectPackages; # Теперь переменная доступна
+            packages = projectPackages;
           };
         };
 
@@ -90,23 +87,17 @@
             grpcurl
             just
             jq
-            # для миграций БД
-            migrate
-            # для тестирования
-            golangci-lint
-            # утилиты для k8s (полезно в dev shell)
             kubectl
             k3s
+            # Добавляем envoy в dev shell, чтобы можно было запускать локально
+            envoy
+            gettext # для envsubst
           ];
 
           shellHook = ''
-            echo "🛠  Microservices Dev Environment"
-            echo "Gateway: :8080"
-            echo "Shell:   :3000"
-            echo "Greeter: :50051 (gRPC), :8081 (HTTP)"
-            echo ""
+            echo "🛠  Microservices Dev Environment (Envoy Enabled)"
+            echo "Gateway: :8080 (Envoy)"
             echo "Run: just dev-all"
-            echo "Test: nix flake check -L"
           '';
         };
       }

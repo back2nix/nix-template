@@ -3,11 +3,9 @@ default:
 
 # --- INSTALL & DEPS ---
 
-deps: deps-gateway deps-shell deps-greeter
+deps: deps-shell deps-greeter
 
-deps-gateway:
-    cd services/gateway/backend && go mod tidy && gomod2nix
-
+# deps-gateway удален, так как Go модули там больше не нужны
 deps-shell:
     cd shell/frontend && yarn install
     cd shell/backend && go mod tidy && gomod2nix
@@ -34,8 +32,11 @@ dev-all:
     @wait
 
 dev-gateway:
-    @echo "🌐 Starting Gateway on :8080..."
-    cd services/gateway/backend && APP_ENV=dev go run cmd/server/main.go
+    @echo "🌐 Starting Envoy Gateway on :8080..."
+    # Используем envsubst для генерации конфига и запускаем envoy
+    @export GATEWAY_HTTP_PORT=8080 GREETER_HOST=localhost GREETER_PORT=8081 && \
+    envsubst < services/gateway/envoy.tmpl.yaml > /tmp/envoy.yaml && \
+    envoy -c /tmp/envoy.yaml --service-cluster gateway --service-node dev
 
 dev-shell:
     @echo "🖥  Starting Shell (Host) on :9002..."
@@ -48,39 +49,6 @@ dev-greeter:
     cd services/greeter/frontend && yarn build
     @echo "Greeter frontend built, starting backend..."
     cd services/greeter/backend && APP_ENV=dev go run cmd/server/main.go
-
-# --- INDIVIDUAL SERVICE RUNS ---
-
-run-gateway:
-    cd services/gateway/backend && APP_ENV=dev go run cmd/server/main.go
-
-run-shell:
-    @echo "Building Shell Frontend..."
-    cd shell/frontend && yarn build
-    @echo "Starting Shell Host on :9002..."
-    cd shell/backend && SHELL_HTTP_PORT=9002 SHELL_STATIC_DIR=../frontend/dist APP_ENV=dev go run cmd/server/main.go
-
-run-greeter:
-    @echo "Building Greeter Widget..."
-    cd services/greeter/frontend && yarn build
-    @echo "Starting Greeter Service on :8081 & :50051..."
-    cd services/greeter/backend && APP_ENV=dev go run cmd/server/main.go
-
-# --- ENVIRONMENT SPECIFIC RUNS ---
-
-dev-staging:
-    @echo "🚀 Starting services in STAGING mode..."
-    @just kill-ports
-    @cd services/gateway/backend && APP_ENV=staging go run cmd/server/main.go &
-    @cd services/greeter/backend && APP_ENV=staging go run cmd/server/main.go &
-    @wait
-
-dev-prod:
-    @echo "🚀 Starting services in PROD mode..."
-    @just kill-ports
-    @cd services/gateway/backend && APP_ENV=prod go run cmd/server/main.go &
-    @cd services/greeter/backend && APP_ENV=prod go run cmd/server/main.go &
-    @wait
 
 # --- BUILD (Nix) ---
 
@@ -100,91 +68,11 @@ build-greeter:
 
 test:
     @echo "🧪 Running tests..."
-    cd services/gateway/backend && go test ./... || true
+    # Gateway тестов Go больше нет
     cd services/greeter/backend && go test ./... || true
-
-test-gateway:
-    cd services/gateway/backend && go test ./...
-
-test-greeter:
-    cd services/greeter/backend && go test ./...
-
-# --- GRPC TESTING ---
-
-grpc-test:
-    @echo "🔧 Testing gRPC endpoint..."
-    grpcurl -plaintext -d '{"name": "TestUser"}' localhost:50051 helloworld.Greeter/SayHello
-
-grpc-health:
-    @echo "🏥 Checking gRPC health..."
-    grpcurl -plaintext localhost:50051 list
-
-# --- HTTP TESTING ---
-
-http-test-gateway:
-    @echo "🌐 Testing Gateway..."
-    curl -s http://localhost:8080/health | jq
-
-http-test-greeter-via-gateway:
-    @echo "👋 Testing Greeter via Gateway..."
-    curl -s "http://localhost:8080/api/greeter/api/hello?name=World" | jq
-
-http-test-greeter-direct:
-    @echo "👋 Testing Greeter directly..."
-    curl -s "http://localhost:8081/api/hello?name=Direct" | jq
-
-# --- LINTING & FORMATTING ---
-
-lint:
-    @echo "🔍 Running linters..."
-    cd services/gateway/backend && golangci-lint run ./... || true
-    cd services/greeter/backend && golangci-lint run ./... || true
-
-fmt:
-    @echo "✨ Formatting code..."
-    cd services/gateway/backend && go fmt ./...
-    cd services/greeter/backend && go fmt ./...
-    cd shell/backend && go fmt ./...
-
-# --- CLEANUP ---
-
-clean:
-    @echo "🧹 Cleaning build artifacts..."
-    rm -rf result
-    find . -name "dist" -type d -exec rm -rf {} + || true
-    find . -name "node_modules" -type d -exec rm -rf {} + || true
-    cd services/gateway/backend && go clean
-    cd services/greeter/backend && go clean
-    cd shell/backend && go clean
-
-clean-all: clean
-    @echo "🧹 Removing all generated files..."
-    rm -rf services/gateway/backend/gomod2nix.toml
-    rm -rf services/greeter/backend/gomod2nix.toml
-    rm -rf shell/backend/gomod2nix.toml
-
-# --- DOCKER (Optional) ---
-
-docker-build:
-    @echo "🐳 Building Docker images..."
-    docker-compose build
-
-docker-up:
-    @echo "🐳 Starting services in Docker..."
-    docker-compose up -d
-
-docker-down:
-    @echo "🐳 Stopping Docker services..."
-    docker-compose down
-
-docker-logs:
-    docker-compose logs -f
+    nix flake check -L
 
 # --- UTILITIES ---
-
-ps:
-    @echo "📊 Running processes:"
-    @ps aux | grep -E "(gateway|greeter|shell)" | grep -v grep || echo "No services running"
 
 kill-ports:
     @echo "💀 Killing processes on our ports..."
@@ -196,7 +84,7 @@ kill-ports:
 
 kill-all: kill-ports
     @echo "💀 Killing all service processes..."
-    @pkill -f "go run.*gateway" || true
+    @pkill -f "envoy.*gateway" || true
     @pkill -f "go run.*greeter" || true
     @pkill -f "go run.*shell" || true
     @echo "✅ All services stopped"

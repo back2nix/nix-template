@@ -1,10 +1,8 @@
 { system, pkgs, packages }:
 
 let
-  # 1. Базовый набор утилит для контейнеров
-  baseImageContents = with pkgs; [ busybox cacert ];
+  baseImageContents = with pkgs; [ busybox cacert gettext ];
 
-  # 2. Заглушка pause-образа (нужна для K3s)
   pauseImage = pkgs.dockerTools.streamLayeredImage {
     name = "test.local/pause";
     tag = "local";
@@ -12,7 +10,6 @@ let
     config = { Cmd = [ "/bin/sh" "-c" "sleep inf" ]; };
   };
 
-  # 3. Образы приложений
   gatewayImage = pkgs.dockerTools.streamLayeredImage {
     name = "gateway";
     tag = "latest";
@@ -31,8 +28,6 @@ let
     contents = baseImageContents ++ [ packages.shell ];
   };
 
-  # 4. Kubernetes манифесты
-  # Используем hostNetwork: true, чтобы избежать проблем с CNI/DNS в песочнице
   k8sManifests = pkgs.writeText "app-deployment.yaml" ''
     ---
     apiVersion: apps/v1
@@ -53,8 +48,6 @@ let
             - { name: APP_ENV, value: "prod" }
             - { name: GREETER_HTTP_PORT, value: "8081" }
             - { name: GREETER_GRPC_PORT, value: "50051" }
-            - { name: LOG_LEVEL, value: "info" }
-            - { name: LOG_FORMAT, value: "json" }
     ---
     apiVersion: apps/v1
     kind: Deployment
@@ -87,37 +80,36 @@ let
           - name: gateway
             image: gateway:latest
             imagePullPolicy: Never
-            command: ["/bin/gateway-backend"]
+            command: ["/bin/start-gateway"]
             env:
-            - { name: APP_ENV, value: "prod" }
-            - { name: GATEWAY_HTTP_PORT, value: "8080" }
-            - { name: GREETER_URL, value: "http://127.0.0.1:8081" }
-            - { name: LOG_LEVEL, value: "info" }
-            - { name: LOG_FORMAT, value: "json" }
+            # ИЗМЕНЕНИЕ: Используем порт 8085 для тестов, чтобы избежать конфликта с kubectl (8080)
+            - { name: GATEWAY_HTTP_PORT, value: "8085" }
+            - { name: GREETER_HOST, value: "127.0.0.1" }
+            - { name: GREETER_PORT, value: "8081" }
   '';
 
 in pkgs.testers.nixosTest {
   name = "microservices-k3s-integration";
 
   nodes.machine = { config, pkgs, ... }: {
-    # Настройка K3s сервера
     services.k3s = {
       enable = true;
       role = "server";
       extraFlags = toString [
         "--disable traefik"
         "--disable metrics-server"
-        "--disable coredns"        # Не нужен при hostNetwork
-        "--disable local-storage"  # Не нужен без PVC
+        "--disable coredns"
+        "--disable local-storage"
         "--pause-image test.local/pause:local"
       ];
     };
 
-    # Утилиты и открытые порты
-    environment.systemPackages = with pkgs; [ kubectl jq ];
-    networking.firewall.allowedTCPPorts = [ 6443 8080 8081 9002 50051 ];
+    # Явно задаем KUBECONFIG, чтобы kubectl сразу знал куда идти (на 6443), а не гадал на 8080
+    environment.variables.KUBECONFIG = "/etc/rancher/k3s/k3s.yaml";
 
-    # Ресурсы VM
+    environment.systemPackages = with pkgs; [ kubectl jq ];
+    # ИЗМЕНЕНИЕ: Добавили 8085 в firewall
+    networking.firewall.allowedTCPPorts = [ 6443 8080 8081 8085 9002 50051 ];
     virtualisation.memorySize = 2048;
     virtualisation.diskSize = 4096;
   };
@@ -125,33 +117,31 @@ in pkgs.testers.nixosTest {
   testScript = ''
     start_all()
 
-    # 1. Инициализация K3s и загрузка Pause образа
     machine.wait_for_unit("k3s")
+
+    # Ждем появления файла конфигурации, чтобы kubectl не ломился на 8080
+    machine.wait_until_succeeds("test -f /etc/rancher/k3s/k3s.yaml")
+
     machine.succeed("${pauseImage} | ctr -n k8s.io image import -")
     machine.wait_until_succeeds("kubectl cluster-info")
 
-    # 2. Загрузка образов приложений
     machine.succeed("${gatewayImage} | ctr -n k8s.io image import -")
     machine.succeed("${greeterImage} | ctr -n k8s.io image import -")
     machine.succeed("${shellImage} | ctr -n k8s.io image import -")
 
-    # 3. Применение манифестов
     machine.succeed("kubectl apply -f ${k8sManifests}")
 
-    # 4. Ожидание готовности подов
     machine.wait_until_succeeds("kubectl get pods | grep gateway | grep Running")
     machine.wait_until_succeeds("kubectl get pods | grep greeter | grep Running")
     machine.wait_until_succeeds("kubectl get pods | grep shell | grep Running")
 
-    # В конце testScript замени проверку health на:
+    # ИЗМЕНЕНИЕ: Проверяем health на порту 8085
+    print("Checking Gateway Health on :8085...")
+    machine.wait_until_succeeds("curl -sSf http://localhost:8085/health | grep 'ok'", timeout=30)
 
-    # 5. Проверка Health Check Gateway (с ретраями)
-    print("Checking Gateway Health...")
-    machine.wait_until_succeeds("curl -sSf http://localhost:8080/health | grep 'ok'", timeout=30)
-
-    # 6. Проверка сквозного запроса (Proxy)
-    print("Checking Gateway -> Greeter proxy...")
-    output = machine.succeed("curl -s 'http://localhost:8080/api/greeter/api/hello?name=NixOS'")
+    # ИЗМЕНЕНИЕ: Проверяем прокси на порту 8085
+    print("Checking Gateway -> Greeter proxy on :8085...")
+    output = machine.succeed("curl -s 'http://localhost:8085/api/greeter/api/hello?name=NixOS'")
 
     print(f"\n========= RESPONSE FROM GATEWAY =========\n{output}\n=========================================\n")
 

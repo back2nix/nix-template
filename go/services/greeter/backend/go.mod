@@ -1,8 +1,6 @@
 module greeter
 
-go 1.25.0
-
-toolchain go1.25.3
+go 1.24.9
 
 require (
 	google.golang.org/grpc v1.77.0
