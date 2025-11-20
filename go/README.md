@@ -45,3 +45,31 @@ just ps        # Показать запущенные процессы
 - **Backend API** (каждый со своим, токен в куках)
 
 Принцип: модуль должен **деградировать gracefully** - если другой модуль сломался, он просто не показывает свою часть, но не падает весь сайт.
+
+
+# Docker hack
+
+Можно не собирать образ, а просто запустить его в alpine примонтировав /nix/store
+
+```bash
+nix build .#gateway
+```
+
+File: Dockerfile.minimal
+```Dockerfile
+FROM alpine:latest
+WORKDIR /app
+CMD ["echo", "Ready. Please provide a command to run, for example, a path from /nix/store."]
+```
+
+
+```bash
+docker build -t gateway-base -f Dockerfile.minimal .
+
+docker run --rm -it \
+         --name my-gateway \
+         -p 8080:8080 \
+         -v /nix/store:/nix/store:ro \
+         gateway-base \
+         "${GATEWAY_PATH}/bin/start-gateway"
+```
