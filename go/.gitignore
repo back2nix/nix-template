@@ -1,5 +1,28 @@
 .direnv/
+
+# Environment configs
+configs/local.env
+configs/*.local.env
 .env
-node_modules
-dist
+.env.local
+
+# Build artifacts
 result
+result-*
+dist/
+node_modules/
+
+# Go
+*.test
+*.out
+vendor/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log

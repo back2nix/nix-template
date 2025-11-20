@@ -7,12 +7,13 @@ import (
 )
 
 func main() {
-	port := os.Getenv("HTTP_PORT")
+	// Читаем SHELL_HTTP_PORT, а не HTTP_PORT
+	port := os.Getenv("SHELL_HTTP_PORT")
 	if port == "" {
-		port = "8080"
+		port = "9002"
 	}
 
-	staticDir := os.Getenv("SERVER_STATIC_DIR")
+	staticDir := os.Getenv("SHELL_STATIC_DIR")
 	if staticDir == "" {
 		staticDir = "./static"
 	}

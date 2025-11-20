@@ -17,7 +17,12 @@ import (
 )
 
 func main() {
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("❌ Failed to load config: %v", err)
+	}
+
+	log.Printf("📋 Starting Greeter in %s mode", cfg.Log.Level)
 
 	greeterUseCase := application.NewGreeterUseCase()
 
@@ -26,11 +31,11 @@ func main() {
 
 	// Start gRPC server
 	go func() {
-		lis, err := net.Listen("tcp", ":"+cfg.GRPCPort)
+		lis, err := net.Listen("tcp", ":"+cfg.Server.GRPCPort)
 		if err != nil {
 			log.Fatalf("Failed to listen gRPC: %v", err)
 		}
-		log.Printf("✅ Greeter gRPC listening at :%s", cfg.GRPCPort)
+		log.Printf("✅ Greeter gRPC listening at :%s", cfg.Server.GRPCPort)
 		if err := grpcServer.Serve(lis); err != nil {
 			log.Fatalf("Failed to serve gRPC: %v", err)
 		}
@@ -38,7 +43,7 @@ func main() {
 
 	// Start HTTP server
 	go func() {
-		log.Printf("✅ Greeter HTTP listening at :%s", cfg.HTTPPort)
+		log.Printf("✅ Greeter HTTP listening at :%s", cfg.Server.HTTPPort)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Failed to serve HTTP: %v", err)
 		}

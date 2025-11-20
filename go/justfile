@@ -35,42 +35,52 @@ dev-all:
 
 dev-gateway:
     @echo "🌐 Starting Gateway on :8080..."
-    cd services/gateway/backend && HTTP_PORT=8080 \
-        GREETER_URL=http://localhost:8081 \
-        go run cmd/server/main.go
+    cd services/gateway/backend && APP_ENV=dev go run cmd/server/main.go
 
 dev-shell:
     @echo "🖥  Starting Shell (Host) on :9002..."
     cd shell/frontend && yarn build
-    cd shell/backend && SERVER_STATIC_DIR=../frontend/dist HTTP_PORT=9002 go run cmd/server/main.go
+    @echo "Shell frontend built, starting backend..."
+    cd shell/backend && SHELL_HTTP_PORT=9002 SHELL_STATIC_DIR=../frontend/dist APP_ENV=dev go run cmd/server/main.go
 
 dev-greeter:
     @echo "👋 Starting Greeter Service..."
     cd services/greeter/frontend && yarn build
-    cd services/greeter/backend && SERVER_STATIC_DIR=../frontend/dist \
-        HTTP_PORT=8081 \
-        GRPC_PORT=50051 \
-        go run cmd/server/main.go
+    @echo "Greeter frontend built, starting backend..."
+    cd services/greeter/backend && APP_ENV=dev go run cmd/server/main.go
 
 # --- INDIVIDUAL SERVICE RUNS ---
 
 run-gateway:
-    cd services/gateway/backend && HTTP_PORT=8080 go run cmd/server/main.go
+    cd services/gateway/backend && APP_ENV=dev go run cmd/server/main.go
 
 run-shell:
     @echo "Building Shell Frontend..."
     cd shell/frontend && yarn build
     @echo "Starting Shell Host on :9002..."
-    cd shell/backend && SERVER_STATIC_DIR=../frontend/dist HTTP_PORT=9002 go run cmd/server/main.go
+    cd shell/backend && SHELL_HTTP_PORT=9002 SHELL_STATIC_DIR=../frontend/dist APP_ENV=dev go run cmd/server/main.go
 
 run-greeter:
     @echo "Building Greeter Widget..."
     cd services/greeter/frontend && yarn build
     @echo "Starting Greeter Service on :8081 & :50051..."
-    cd services/greeter/backend && SERVER_STATIC_DIR=../frontend/dist \
-        HTTP_PORT=8081 \
-        GRPC_PORT=50051 \
-        go run cmd/server/main.go
+    cd services/greeter/backend && APP_ENV=dev go run cmd/server/main.go
+
+# --- ENVIRONMENT SPECIFIC RUNS ---
+
+dev-staging:
+    @echo "🚀 Starting services in STAGING mode..."
+    @just kill-ports
+    @cd services/gateway/backend && APP_ENV=staging go run cmd/server/main.go &
+    @cd services/greeter/backend && APP_ENV=staging go run cmd/server/main.go &
+    @wait
+
+dev-prod:
+    @echo "🚀 Starting services in PROD mode..."
+    @just kill-ports
+    @cd services/gateway/backend && APP_ENV=prod go run cmd/server/main.go &
+    @cd services/greeter/backend && APP_ENV=prod go run cmd/server/main.go &
+    @wait
 
 # --- BUILD (Nix) ---
 
@@ -209,6 +219,25 @@ logs-gateway:
 logs-greeter:
     tail -f /tmp/greeter.log || echo "No greeter logs"
 
+# --- CONFIG MANAGEMENT ---
+
+config-dev:
+    @echo "📋 Dev config:"
+    @cat configs/dev.env
+
+config-staging:
+    @echo "📋 Staging config:"
+    @cat configs/staging.env
+
+config-prod:
+    @echo "📋 Production config:"
+    @cat configs/prod.env
+
+config-init:
+    @echo "📋 Copying local.env.example to local.env..."
+    @cp configs/local.env.example configs/local.env
+    @echo "✅ Edit configs/local.env for your local setup"
+
 # --- INFO ---
 
 info:
@@ -226,17 +255,25 @@ info:
     @echo "  - http://localhost:8081/health         (Greeter health)"
     @echo "  - http://localhost:9002                (Shell/Host)"
     @echo ""
+    @echo "Environments:"
+    @echo "  - dev      (configs/dev.env)"
+    @echo "  - staging  (configs/staging.env)"
+    @echo "  - prod     (configs/prod.env)"
+    @echo "  - local    (configs/local.env - create with 'just config-init')"
+    @echo ""
     @echo "Commands:"
     @echo "  just deps          - Install all dependencies"
-    @echo "  just dev-all       - Start all services"
+    @echo "  just dev-all       - Start all services (dev mode)"
+    @echo "  just dev-staging   - Start in staging mode"
     @echo "  just test          - Run all tests"
     @echo "  just grpc-test     - Test gRPC endpoint"
     @echo "  just build         - Build with Nix"
     @echo "  just clean         - Clean artifacts"
+    @echo "  just config-init   - Create local.env from example"
 
 # --- QUICK START ---
 
-setup: deps gen-proto
+setup: deps gen-proto config-init
     @echo "✅ Project setup complete!"
     @just info
 
