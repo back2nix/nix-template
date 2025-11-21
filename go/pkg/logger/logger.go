@@ -5,12 +5,14 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Log - глобальный инстанс логгера
 var Log *slog.Logger
 
-// Init инициализирует логгер в формате JSON для удобного парсинга в Loki
+// Init инициализирует логгер в формате JSON для удобного парсинга в OTel/VictoriaLogs
 func Init(serviceName string, level string) {
 	var logLevel slog.Level
 
@@ -27,10 +29,10 @@ func Init(serviceName string, level string) {
 
 	opts := &slog.HandlerOptions{
 		Level: logLevel,
-		// AddSource: true, // Можно включить, если нужны строки кода, но это дороже
+		// AddSource: true, // Можно включить для отладки
 	}
 
-	// JSONHandler обязателен для качественного логирования в Loki
+	// ОБЯЗАТЕЛЬНО JSONHandler для структурированных логов
 	handler := slog.NewJSONHandler(os.Stdout, opts)
 
 	Log = slog.New(handler).With(
@@ -40,18 +42,34 @@ func Init(serviceName string, level string) {
 	slog.SetDefault(Log)
 }
 
+// withTrace добавляет TraceID и SpanID из контекста в поля лога
+func withTrace(ctx context.Context) *slog.Logger {
+	spanContext := trace.SpanFromContext(ctx).SpanContext()
+	if spanContext.IsValid() {
+		return Log.With(
+			slog.String("trace_id", spanContext.TraceID().String()),
+			slog.String("span_id", spanContext.SpanID().String()),
+		)
+	}
+	return Log
+}
+
 // Info логирует информационное сообщение с контекстом
 func Info(ctx context.Context, msg string, args ...any) {
-	// В будущем здесь можно вытаскивать TraceID из ctx и добавлять в логи
-	Log.InfoContext(ctx, msg, args...)
+	withTrace(ctx).InfoContext(ctx, msg, args...)
 }
 
 // Error логирует ошибку с контекстом
 func Error(ctx context.Context, msg string, args ...any) {
-	Log.ErrorContext(ctx, msg, args...)
+	withTrace(ctx).ErrorContext(ctx, msg, args...)
 }
 
 // Debug логирует отладочное сообщение
 func Debug(ctx context.Context, msg string, args ...any) {
-	Log.DebugContext(ctx, msg, args...)
+	withTrace(ctx).DebugContext(ctx, msg, args...)
+}
+
+// Warn логирует предупреждение
+func Warn(ctx context.Context, msg string, args ...any) {
+	withTrace(ctx).WarnContext(ctx, msg, args...)
 }

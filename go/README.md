@@ -127,3 +127,23 @@ docker run --rm -it \
          gateway-base \
          "${GATEWAY_PATH}/bin/start-gateway"
 ```
+
+
+# VictoriaMetrics
+
+```
+# Все логи от сервиса
+{"service.name"="greeter-service"}
+
+# Несколько сервисов
+{"service.name"=~"greeter-service|shell-service"}
+
+# Только ошибки
+{"service.name"=~".*"} AND level:ERROR
+
+# Логи с определенным trace_id
+{"service.name"=~".*"} AND trace_id:"your-trace-id"
+
+# Фильтр по времени (автоматически в Grafana)
+{"service.name"="shell-service"} | filter _time:>now-1h
+```

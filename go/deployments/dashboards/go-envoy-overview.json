@@ -91,21 +91,26 @@
       "description": "List of recent traces. If empty, generate traffic."
     },
     {
-      "title": "Live Logs",
+      "title": "Live Logs (VictoriaLogs)",
       "type": "logs",
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 16 },
-      "datasource": { "type": "loki", "uid": "${Loki}" },
+      "datasource": { "type": "victoriametrics-logs-datasource", "uid": "VictoriaLogs" },
       "targets": [
         {
-          "datasource": { "type": "loki", "uid": "${Loki}" },
-          "expr": "{job=~\"$service|envoy-gateway\"}"
+          "datasource": { "type": "victoriametrics-logs-datasource", "uid": "VictoriaLogs" },
+          "refId": "A",
+          "expr": "service.name:$service",
+          "queryType": "range",
+          "legendFormat": ""
         }
       ],
       "options": {
         "showTime": true,
         "showLabels": false,
         "wrapLogMessage": true,
-        "sortOrder": "Descending"
+        "sortOrder": "Descending",
+        "dedupStrategy": "none",
+        "enableLogDetails": true
       }
     }
   ],
@@ -114,14 +119,6 @@
   "tags": ["observability"],
   "templating": {
     "list": [
-      {
-        "name": "Loki",
-        "type": "datasource",
-        "query": "loki",
-        "label": "Loki Datasource",
-        "hide": 0,
-        "refresh": 1
-      },
       {
         "name": "service",
         "type": "query",
@@ -132,12 +129,17 @@
         "multi": false,
         "includeAll": false,
         "label": "Service",
-        "hide": 0
+        "hide": 0,
+        "current": {
+          "selected": false,
+          "text": "greeter-service",
+          "value": "greeter-service"
+        }
       }
     ]
   },
   "time": { "from": "now-15m", "to": "now" },
   "title": "Microservices Overview (Final)",
   "uid": "microservices-overview",
-  "version": 6
+  "version": 10
 }

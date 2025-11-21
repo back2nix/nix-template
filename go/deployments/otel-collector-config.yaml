@@ -6,11 +6,10 @@ receivers:
       http:
         endpoint: "0.0.0.0:4318"
         cors:
-          # ИСПРАВЛЕНИЕ: Явный список разрешенных Origins вместо "*"
           allowed_origins:
             - "http://localhost:8080"
             - "http://localhost:9002"
-            - "http://localhost:5173" # Vite dev server
+            - "http://localhost:5173"
             - "http://127.0.0.1:8080"
             - "http://127.0.0.1:9002"
           allowed_headers: ["*"]
@@ -27,31 +26,78 @@ receivers:
           static_configs:
             - targets: ['0.0.0.0:8888']
 
-        # ВАЖНО: Эта конфигурация используется и в Docker (local dev), и в K3s (тесты).
-        # Для локальной разработки (Docker -> Host) Envoy может быть недоступен по имени "gateway".
-        # Если метрики Envoy в Grafana будут пустыми при локальном запуске,
-        # можно добавить "host.docker.internal:9901" (требует настройки в docker-compose).
         - job_name: 'envoy-gateway'
           scrape_interval: 5s
           metrics_path: /stats/prometheus
           static_configs:
-            - targets: ['gateway:9901', 'host.docker.internal:9901']
+            - targets: ['host.docker.internal:9901']
               labels:
                 service_name: 'gateway-proxy'
 
         - job_name: 'greeter-service'
           scrape_interval: 5s
           static_configs:
-            - targets: ['greeter:8081', 'host.docker.internal:8081']
+            - targets: ['host.docker.internal:8081']
               labels:
                 service_name: 'greeter-service'
 
         - job_name: 'shell-service'
           scrape_interval: 5s
           static_configs:
-            - targets: ['shell:9002', 'host.docker.internal:9002']
+            - targets: ['host.docker.internal:9002']
               labels:
                 service_name: 'shell-service'
+
+  # Чтение JSON логов из /tmp файлов
+  filelog/app:
+    include:
+      - /tmp/greeter.log
+      - /tmp/shell.log
+    start_at: beginning
+    include_file_name: true
+    include_file_path: true
+    operators:
+      # 1. Парсим только JSON строки
+      - type: json_parser
+        id: json_parse
+        parse_from: body
+        if: 'body matches "^\\{"'
+
+      # 2. Парсим timestamp из распарсенного JSON
+      - type: time_parser
+        id: time_parse
+        parse_from: attributes.time
+        layout: '%Y-%m-%dT%H:%M:%S.%LZ'
+        if: 'attributes.time != nil'
+
+      # 3. Извлекаем trace_id если есть
+      - type: trace_parser
+        id: trace_parse
+        trace_id:
+          parse_from: attributes.trace_id
+        span_id:
+          parse_from: attributes.span_id
+        if: 'attributes.trace_id != nil'
+
+      # 4. Переносим service в resource attributes
+      - type: move
+        id: move_service
+        from: attributes.service
+        to: resource["service.name"]
+        if: 'attributes.service != nil'
+
+      # 5. Парсим severity из level
+      - type: severity_parser
+        id: severity_parse
+        parse_from: attributes.level
+        if: 'attributes.level != nil'
+
+      # 6. Переносим msg в body
+      - type: move
+        id: move_msg
+        from: attributes.msg
+        to: body
+        if: 'attributes.msg != nil'
 
 processors:
   batch:
@@ -62,6 +108,12 @@ processors:
     detectors: [env, system]
     timeout: 2s
     override: false
+
+  attributes:
+    actions:
+      - key: deployment.environment
+        value: dev
+        action: upsert
 
 exporters:
   otlp/tempo:
@@ -74,16 +126,35 @@ exporters:
     resource_to_telemetry_conversion:
       enabled: true
 
+  # VictoriaLogs exporter - только базовый путь
+  otlphttp/victorialogs:
+    endpoint: "http://victoria-logs:9428/insert/opentelemetry"
+    tls:
+      insecure: true
+    compression: gzip
+
   debug:
-    verbosity: normal
+    verbosity: detailed
+    sampling_initial: 5
+    sampling_thereafter: 200
 
 service:
+  telemetry:
+    metrics:
+      address: "0.0.0.0:8888"
+
   pipelines:
     traces:
       receivers: [otlp, zipkin]
       processors: [batch, resourcedetection]
       exporters: [otlp/tempo, debug]
+
     metrics:
       receivers: [otlp, prometheus]
       processors: [batch, resourcedetection]
       exporters: [prometheusremotewrite/vm]
+
+    logs:
+      receivers: [otlp, filelog/app]
+      processors: [batch, resourcedetection, attributes]
+      exporters: [otlphttp/victorialogs, debug]

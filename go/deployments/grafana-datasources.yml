@@ -7,10 +7,18 @@ datasources:
     url: http://victoriametrics:8428
     isDefault: true
     jsonData:
-      # ЭТА НАСТРОЙКА КЛЮЧЕВАЯ для Metrics -> Traces
       exemplarTraceIdDestinations:
         - datasourceUid: Tempo
           name: TraceID
+    editable: true
+
+  - name: VictoriaLogs
+    type: victoriametrics-logs-datasource
+    access: proxy
+    url: http://victoria-logs:9428
+    isDefault: false
+    jsonData:
+      manageAlerts: false
     editable: true
 
   - name: Tempo
@@ -22,27 +30,16 @@ datasources:
     isDefault: false
     jsonData:
       httpMethod: GET
-      # ЭТА НАСТРОЙКА КЛЮЧЕВАЯ для Traces -> Logs
-      tracesToLogs:
-        datasourceUid: 'Loki'
-        tags: ['job', 'instance', 'pod', 'namespace']
-        mappedTags: [{ key: 'service.name', value: 'service' }]
-        mapTagNamesEnabled: false
-        spanStartTimeShift: '1h'
-        spanEndTimeShift: '-1h'
+      tracesToLogsV2:
+        datasourceUid: 'VictoriaLogs'
+        # ИСПРАВЛЕНО: правильный синтаксис для VictoriaLogs
+        query: '{"service.name"="${__trace.serviceName}"}'
+        tags: ['service.name']
         filterByTraceID: true
-        filterBySpanID: true
-    editable: true
-
-  - name: Loki
-    type: loki
-    access: proxy
-    url: http://loki:3100
-    jsonData:
-      # ЭТА НАСТРОЙКА КЛЮЧЕВАЯ для Logs -> Traces
-      derivedFields:
-        - datasourceUid: Tempo
-          matcherRegex: "traceID=(\\w+)"
-          name: TraceID
-          url: "$${__value.raw}"
+        filterBySpanID: false
+      tracesToLogs:
+        datasourceUid: 'VictoriaLogs'
+        # Fallback для старых версий Grafana
+        filterByTraceID: true
+        filterBySpanID: false
     editable: true
