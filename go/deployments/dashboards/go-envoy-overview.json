@@ -94,10 +94,11 @@
       "title": "Live Logs",
       "type": "logs",
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 16 },
+      "datasource": { "type": "loki", "uid": "${Loki}" },
       "targets": [
         {
-          "datasource": { "type": "loki", "uid": "Loki" },
-          "expr": "{job=~\"$service|envoy-gateway\"} | json"
+          "datasource": { "type": "loki", "uid": "${Loki}" },
+          "expr": "{job=~\"$service|envoy-gateway\"}"
         }
       ],
       "options": {
@@ -113,6 +114,14 @@
   "tags": ["observability"],
   "templating": {
     "list": [
+      {
+        "name": "Loki",
+        "type": "datasource",
+        "query": "loki",
+        "label": "Loki Datasource",
+        "hide": 0,
+        "refresh": 1
+      },
       {
         "name": "service",
         "type": "query",
@@ -130,5 +139,5 @@
   "time": { "from": "now-15m", "to": "now" },
   "title": "Microservices Overview (Final)",
   "uid": "microservices-overview",
-  "version": 5
+  "version": 6
 }

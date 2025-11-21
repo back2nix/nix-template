@@ -15,7 +15,6 @@ scrape_configs:
       - targets:
           - localhost
         labels:
-          # ИСПРАВЛЕНО: job должен совпадать с тем, что в Prometheus/Collector
           job: envoy-gateway
           service: gateway-service
           __path__: /tmp/gateway.log
@@ -24,12 +23,6 @@ scrape_configs:
           expressions:
             level: level
             msg: msg
-            method: method
-            path: path
-            response_code: response_code
-            duration: duration
-            x_request_id: x_request_id
-            # ИСПРАВЛЕНО: В Envoy конфиге поле называется traceID
             traceID: traceID
             time: start_time
       - labels:
@@ -45,20 +38,21 @@ scrape_configs:
       - targets:
           - localhost
         labels:
-          # ИСПРАВЛЕНО: greeter -> greeter-service
+          # Явно задаем service, чтобы он был в фильтрах Loki
           job: greeter-service
           service: greeter-service
           __path__: /tmp/greeter.log
     pipeline_stages:
+      # Пытаемся распарсить как JSON, но не дропаем, если это текст
       - json:
           expressions:
             level: level
             msg: msg
             time: time
-            # Добавляем TraceID, если он появится в логах Go
             traceID: traceID
       - labels:
           level:
+      # Если таймстемп не найден (текстовый лог), будет использовано время получения (skip)
       - timestamp:
           source: time
           format: RFC3339Nano
@@ -70,7 +64,7 @@ scrape_configs:
       - targets:
           - localhost
         labels:
-          # ИСПРАВЛЕНО: shell -> shell-service
+          # Явно задаем service, чтобы он был в фильтрах Loki
           job: shell-service
           service: shell-service
           __path__: /tmp/shell.log

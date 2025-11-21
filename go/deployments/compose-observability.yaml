@@ -43,6 +43,8 @@ services:
 
   promtail:
     image: grafana/promtail:2.9.2
+    # ВАЖНО: Запуск от рута, чтобы был доступ к /var/run/docker.sock
+    user: "0:0"
     volumes:
       - /tmp:/tmp:ro
       - ./promtail-config.yaml:/etc/promtail/config.yml:ro
