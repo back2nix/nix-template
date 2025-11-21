@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 
 	"greeter/internal/application"
-	"greeter/internal/config"
 	"greeter/internal/middleware"
+	"greeter/pkg/config"
 	"greeter/pkg/logger"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -18,12 +18,11 @@ import (
 type Server struct {
 	server  *http.Server
 	useCase *application.GreeterUseCase
-	config  *config.Config
+	config  *config.AppConfig
 }
 
-func NewServer(cfg *config.Config, useCase *application.GreeterUseCase) *Server {
+func NewServer(cfg *config.AppConfig, useCase *application.GreeterUseCase) *Server {
 	mux := http.NewServeMux()
-
 	s := &Server{
 		useCase: useCase,
 		config:  cfg,
@@ -53,7 +52,6 @@ func NewServer(cfg *config.Config, useCase *application.GreeterUseCase) *Server 
 
 	// Слушаем на 0.0.0.0, чтобы было видно из Docker
 	addr := "0.0.0.0:" + cfg.Server.HTTPPort
-
 	s.server = &http.Server{
 		Addr:    addr,
 		Handler: handler,

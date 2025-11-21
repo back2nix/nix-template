@@ -1,25 +1,37 @@
 package config
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/spf13/viper"
 )
 
-// Loader загружает конфигурацию из env файлов и переменных окружения
+// Loader загружает конфигурацию с использованием Viper
 type Loader struct {
+	v   *viper.Viper
 	env string
 }
 
 // NewLoader создает новый загрузчик конфигурации
 func NewLoader() *Loader {
-	env := os.Getenv("APP_ENV")
+	v := viper.New()
+
+	// Настраиваем чтение из environment variables
+	v.AutomaticEnv()
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+
+	env := v.GetString("APP_ENV")
 	if env == "" {
 		env = "dev"
 	}
-	return &Loader{env: env}
+
+	return &Loader{
+		v:   v,
+		env: env,
+	}
 }
 
 // findProjectRoot ищет корень проекта (где находится flake.nix)
@@ -31,7 +43,8 @@ func findProjectRoot() (string, error) {
 
 	// Идём вверх по директориям пока не найдём flake.nix
 	for {
-		if _, err := os.Stat(filepath.Join(dir, "flake.nix")); err == nil {
+		flakePath := filepath.Join(dir, "flake.nix")
+		if _, err := os.Stat(flakePath); err == nil {
 			return dir, nil
 		}
 
@@ -45,7 +58,7 @@ func findProjectRoot() (string, error) {
 }
 
 // Load загружает конфигурацию с приоритетами:
-// 1. Дефолтные значения (в структуре конфига сервиса)
+// 1. Дефолтные значения (установленные через SetDefault)
 // 2. Файл configs/{APP_ENV}.env
 // 3. OS environment variables (переопределяют всё)
 func (l *Loader) Load() error {
@@ -56,84 +69,43 @@ func (l *Loader) Load() error {
 		return nil
 	}
 
-	configPath := filepath.Join(projectRoot, "configs", fmt.Sprintf("%s.env", l.env))
+	configPath := filepath.Join(projectRoot, "configs")
+	configName := l.env
 
-	// Проверяем существование файла
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		// Файл не существует - продолжаем только с OS env
-		fmt.Printf("⚠️  Config file %s not found, using only environment variables\n", configPath)
-		return nil
-	}
+	// Настраиваем Viper для чтения конфиг файла
+	l.v.SetConfigName(configName)
+	l.v.SetConfigType("env")
+	l.v.AddConfigPath(configPath)
 
-	file, err := os.Open(configPath)
-	if err != nil {
-		return fmt.Errorf("failed to open config file %s: %w", configPath, err)
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	lineNum := 0
-
-	for scanner.Scan() {
-		lineNum++
-		line := strings.TrimSpace(scanner.Text())
-
-		// Пропускаем пустые строки и комментарии
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
+	// Пытаемся прочитать конфиг файл
+	if err := l.v.ReadInConfig(); err != nil {
+		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
+			fmt.Printf("⚠️  Config file %s.env not found in %s, using only environment variables\n", configName, configPath)
+			return nil
 		}
-
-		// Парсим KEY=VALUE
-		parts := strings.SplitN(line, "=", 2)
-		if len(parts) != 2 {
-			return fmt.Errorf("invalid format in %s at line %d: %s", configPath, lineNum, line)
-		}
-
-		key := strings.TrimSpace(parts[0])
-		value := strings.TrimSpace(parts[1])
-
-		// Убираем кавычки если есть
-		value = strings.Trim(value, "\"'")
-
-		// Устанавливаем переменную окружения ТОЛЬКО если она еще не установлена
-		// Это даёт приоритет OS environment variables
-		if os.Getenv(key) == "" {
-			if err := os.Setenv(key, value); err != nil {
-				return fmt.Errorf("failed to set env var %s: %w", key, err)
-			}
-		}
+		return fmt.Errorf("failed to read config file: %w", err)
 	}
 
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("error reading config file %s: %w", configPath, err)
-	}
-
-	fmt.Printf("✅ Loaded config from %s\n", configPath)
+	fmt.Printf("✅ Loaded config from %s\n", l.v.ConfigFileUsed())
 	return nil
 }
 
-// GetEnv получает значение переменной окружения с fallback
-func GetEnv(key, fallback string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return fallback
+// GetViper возвращает экземпляр Viper для прямого доступа
+func (l *Loader) GetViper() *viper.Viper {
+	return l.v
 }
 
-// MustGetEnv получает значение переменной окружения, паникует если не найдена
-func MustGetEnv(key string) string {
-	value := os.Getenv(key)
-	if value == "" {
-		panic(fmt.Sprintf("required environment variable %s is not set", key))
-	}
-	return value
+// SetDefault устанавливает дефолтное значение
+func (l *Loader) SetDefault(key string, value interface{}) {
+	l.v.SetDefault(key, value)
 }
 
-// GetEnvBool получает boolean значение из env
-func GetEnvBool(key string, fallback bool) bool {
-	value := os.Getenv(key)
-	if value == "" {
-		return fallback
-	}
-	return value == "true" || value == "1" || value == "yes"
+// Unmarshal десериализует конфигурацию в структуру
+func (l *Loader) Unmarshal(cfg interface{}) error {
+	return l.v.Unmarshal(cfg)
+}
+
+// UnmarshalKey десериализует конкретный ключ в структуру
+func (l *Loader) UnmarshalKey(key string, cfg interface{}) error {
+	return l.v.UnmarshalKey(key, cfg)
 }

@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"greeter/internal/application"
-	"greeter/internal/config"
 	grpcHandler "greeter/internal/infrastructure/grpc"
 	httpHandler "greeter/internal/infrastructure/http"
+	"greeter/pkg/config"
 	"greeter/pkg/logger"
 	"greeter/pkg/telemetry"
 
@@ -22,20 +22,49 @@ import (
 )
 
 func main() {
-	cfg, err := config.Load()
-	if err != nil {
+	// Загружаем конфигурацию
+	loader := config.NewLoader()
+
+	// Устанавливаем дефолтные значения
+	loader.SetDefault("GREETER_HTTP_PORT", "8081")
+	loader.SetDefault("GREETER_GRPC_PORT", "50051")
+	loader.SetDefault("LOG_LEVEL", "info")
+	loader.SetDefault("LOG_FORMAT", "text")
+	loader.SetDefault("OTEL_EXPORTER_OTLP_ENDPOINT", "127.0.0.1:4317")
+
+	if err := loader.Load(); err != nil {
 		log.Fatalf("❌ Failed to load config: %v", err)
 	}
 
-	logger.Init("greeter-service", cfg.Log.Level)
-	ctx := context.Background()
-	logger.Info(ctx, "🚀 Starting Greeter Service", "env", os.Getenv("APP_ENV"))
+	v := loader.GetViper()
 
-	otelCollector := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-	if otelCollector == "" {
-		otelCollector = "127.0.0.1:4317"
+	// Валидация критичных параметров
+	validator := config.NewValidator()
+	httpPort := v.GetString("GREETER_HTTP_PORT")
+	grpcPort := v.GetString("GREETER_GRPC_PORT")
+
+	if err := validator.ValidatePort(httpPort); err != nil {
+		log.Fatalf("❌ Invalid HTTP port: %v", err)
+	}
+	if err := validator.ValidatePort(grpcPort); err != nil {
+		log.Fatalf("❌ Invalid gRPC port: %v", err)
 	}
 
+	logLevel := v.GetString("LOG_LEVEL")
+	if err := validator.ValidateOneOf(logLevel, []string{"debug", "info", "warn", "error"}, "log level"); err != nil {
+		log.Fatalf("❌ Invalid log level: %v", err)
+	}
+
+	// Инициализация логгера
+	logger.Init("greeter-service", logLevel)
+	ctx := context.Background()
+	logger.Info(ctx, "🚀 Starting Greeter Service",
+		"env", v.GetString("APP_ENV"),
+		"http_port", httpPort,
+		"grpc_port", grpcPort)
+
+	// Инициализация трейсинга
+	otelCollector := v.GetString("OTEL_EXPORTER_OTLP_ENDPOINT")
 	shutdownTracer, err := telemetry.InitTracer(ctx, "greeter-service", otelCollector)
 	if err != nil {
 		logger.Error(ctx, "Failed to init tracer", "error", err)
@@ -48,18 +77,31 @@ func main() {
 		logger.Info(ctx, "✅ Tracing initialized", "collector", otelCollector)
 	}
 
+	// Создаём use case и серверы
 	greeterUseCase := application.NewGreeterUseCase()
 
 	grpcOpts := []grpc.ServerOption{
 		grpc.StatsHandler(otelgrpc.NewServerHandler()),
 	}
 	grpcServer := grpcHandler.NewServer(greeterUseCase, grpcOpts...)
+
+	// Для HTTP сервера создаём минимальную конфигурацию
+	cfg := &config.AppConfig{
+		Server: config.ServerConfig{
+			HTTPPort:  httpPort,
+			GRPCPort:  grpcPort,
+			StaticDir: v.GetString("SHELL_STATIC_DIR"),
+		},
+		Log: config.LogConfig{
+			Level:  logLevel,
+			Format: v.GetString("LOG_FORMAT"),
+		},
+	}
 	httpServer := httpHandler.NewServer(cfg, greeterUseCase)
 
-	// --- FIX: Listen on 0.0.0.0 explicitly ---
-	// Это позволит Docker-контейнеру (Collector) видеть метрики сервиса
-	grpcAddr := "0.0.0.0:" + cfg.Server.GRPCPort
-	httpAddr := "0.0.0.0:" + cfg.Server.HTTPPort
+	// Запускаем серверы
+	grpcAddr := "0.0.0.0:" + grpcPort
+	httpAddr := "0.0.0.0:" + httpPort
 
 	go func() {
 		lis, err := net.Listen("tcp", grpcAddr)
@@ -75,7 +117,6 @@ func main() {
 
 	go func() {
 		logger.Info(ctx, "✅ Greeter HTTP listening", "addr", httpAddr)
-		// Принудительно перезаписываем Addr в сервере
 		httpServer.SetAddr(httpAddr)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Error(ctx, "Failed to serve HTTP", "error", err)
@@ -83,6 +124,7 @@ func main() {
 		}
 	}()
 
+	// Graceful shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
