@@ -1,0 +1,52 @@
+groups:
+  - name: critical-alerts
+    rules:
+      # 1. Availability: Сервис недоступен (не отдает метрики)
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service {{ $labels.service_name }} is down"
+          description: "Service has been down for more than 1 minute."
+
+      # 2. Error Rate: Высокий процент 5xx ошибок (> 5%)
+      # Используем метрики от otelhttp: http_server_request_duration_seconds_count
+      - alert: HighErrorRate
+        expr: |
+          sum by (service_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.*"}[5m]))
+          /
+          sum by (service_name) (rate(http_server_request_duration_seconds_count[5m])) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High Error Rate on {{ $labels.service_name }}"
+          description: "Error rate is above 5% for the last 2 minutes."
+
+      # 3. Latency: Высокое время ответа (P95 > 500ms)
+      # Вычисляем 95-й перцентиль по гистограмме
+      - alert: HighLatency
+        expr: |
+          histogram_quantile(0.95, sum by (le, service_name) (rate(http_server_request_duration_seconds_bucket[5m]))) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High Latency on {{ $labels.service_name }}"
+          description: "95th percentile of request duration is > 500ms."
+
+      # 4. Envoy Gateway Errors: Ошибки на уровне шлюза
+      # Метрика envoy_http_downstream_rq_xx показывает ответы клиентам
+      - alert: GatewayHighErrorRate
+        expr: |
+          sum(rate(envoy_http_downstream_rq_xx{envoy_response_code_class="5"}[5m]))
+          /
+          sum(rate(envoy_http_downstream_rq_total[5m])) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Envoy Gateway High Error Rate"
+          description: "Gateway is returning 5xx errors > 5%."

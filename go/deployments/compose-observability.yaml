@@ -36,6 +36,28 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  # --- Alerting Engine (vmalert) ---
+  vmalert:
+    image: victoriametrics/vmalert:v1.93.0
+    depends_on:
+      - victoriametrics
+    volumes:
+      - ./alerts.yml:/etc/alerts/alerts.yml
+    ports:
+      - "8880:8880"
+    command:
+      - "--rule=/etc/alerts/*.yml"
+      # Источник данных для проверки правил
+      - "--datasource.url=http://victoriametrics:8428"
+      # Куда записывать состояние алертов (для истории в Grafana)
+      - "--remoteWrite.url=http://victoriametrics:8428"
+      # ВАЖНО: Заглушка для уведомлений, чтобы контейнер не падал
+      - "--notifier.blackhole"
+      # Частота проверки правил
+      - "--evaluationInterval=15s"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
   # --- Logs Storage (VictoriaLogs) ---
   victoria-logs:
     image: victoriametrics/victoria-logs:v1.38.0
@@ -68,7 +90,6 @@ services:
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
       - GF_FEATURE_TOGGLES_ENABLE=traceqlEditor
-      # ИСПРАВЛЕНО: правильный ID плагина
       - GF_INSTALL_PLUGINS=victoriametrics-logs-datasource
       - GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=victoriametrics-logs-datasource
     volumes:
