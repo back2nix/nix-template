@@ -30,6 +30,20 @@ let
 
   k8sManifests = pkgs.writeText "app-deployment.yaml" ''
     ---
+    # --- GREETER SERVICE ---
+    apiVersion: v1
+    kind: Service
+    metadata: { name: greeter }
+    spec:
+      selector: { app: greeter }
+      ports:
+        - name: grpc
+          port: 50051
+          targetPort: 50051
+        - name: http
+          port: 8081
+          targetPort: 8081
+    ---
     apiVersion: apps/v1
     kind: Deployment
     metadata: { name: greeter }
@@ -38,7 +52,6 @@ let
       template:
         metadata: { labels: { app: greeter } }
         spec:
-          hostNetwork: true
           containers:
           - name: greeter
             image: greeter:latest
@@ -48,6 +61,18 @@ let
             - { name: APP_ENV, value: "prod" }
             - { name: GREETER_HTTP_PORT, value: "8081" }
             - { name: GREETER_GRPC_PORT, value: "50051" }
+
+    ---
+    # --- SHELL SERVICE ---
+    apiVersion: v1
+    kind: Service
+    metadata: { name: shell }
+    spec:
+      selector: { app: shell }
+      ports:
+        - name: http
+          port: 9002
+          targetPort: 9002
     ---
     apiVersion: apps/v1
     kind: Deployment
@@ -57,7 +82,6 @@ let
       template:
         metadata: { labels: { app: shell } }
         spec:
-          hostNetwork: true
           containers:
           - name: shell
             image: shell:latest
@@ -66,6 +90,20 @@ let
             env:
             - { name: APP_ENV, value: "prod" }
             - { name: SHELL_HTTP_PORT, value: "9002" }
+
+    ---
+    # --- GATEWAY SERVICE ---
+    apiVersion: v1
+    kind: Service
+    metadata: { name: gateway }
+    spec:
+      type: NodePort
+      selector: { app: gateway }
+      ports:
+        - name: http
+          port: 8085
+          targetPort: 8085
+          nodePort: 30085
     ---
     apiVersion: apps/v1
     kind: Deployment
@@ -75,7 +113,6 @@ let
       template:
         metadata: { labels: { app: gateway } }
         spec:
-          hostNetwork: true
           containers:
           - name: gateway
             image: gateway:latest
@@ -83,8 +120,9 @@ let
             command: ["/bin/start-gateway"]
             env:
             - { name: GATEWAY_HTTP_PORT, value: "8085" }
-            - { name: GREETER_HOST, value: "127.0.0.1" }
-            - { name: GREETER_PORT, value: "8081" }
+            # Мы не задаем GREETER_HOST/SHELL_HOST явно.
+            # Скрипт start-gateway сам возьмет их из K8s Env Vars (GREETER_SERVICE_HOST),
+            # которые K8s пробросит, так как сервисы созданы раньше деплоймента.
   '';
 
 in pkgs.testers.nixosTest {
@@ -97,7 +135,7 @@ in pkgs.testers.nixosTest {
       extraFlags = toString [
         "--disable traefik"
         "--disable metrics-server"
-        "--disable coredns"
+        "--disable coredns" # CoreDNS отключен, так как нет образа
         "--disable local-storage"
         "--pause-image test.local/pause:local"
       ];
@@ -105,8 +143,8 @@ in pkgs.testers.nixosTest {
 
     environment.variables.KUBECONFIG = "/etc/rancher/k3s/k3s.yaml";
 
-    environment.systemPackages = with pkgs; [ kubectl jq ];
-    networking.firewall.allowedTCPPorts = [ 6443 8080 8081 8085 9002 50051 ];
+    environment.systemPackages = with pkgs; [ kubectl jq netcat ];
+    networking.firewall.allowedTCPPorts = [ 6443 30085 ];
     virtualisation.memorySize = 2048;
     virtualisation.diskSize = 4096;
   };
@@ -126,38 +164,23 @@ in pkgs.testers.nixosTest {
 
     machine.succeed("kubectl apply -f ${k8sManifests}")
 
-    # Ждем пока pod'ы создадутся
     machine.wait_until_succeeds("kubectl get pods | grep greeter")
     machine.wait_until_succeeds("kubectl get pods | grep shell")
     machine.wait_until_succeeds("kubectl get pods | grep gateway")
 
-    # Даём время на первый запуск gateway
-    import time
-    time.sleep(5)
-
-    # DEBUGGING: Получаем имя и логи gateway pod'а
-    print("\n========= GATEWAY POD STATUS =========")
-    gateway_status = machine.succeed("kubectl get pods | grep gateway")
-    print(gateway_status)
-
-    gateway_pod = machine.succeed("kubectl get pods -o name | grep gateway").strip()
-    print(f"Gateway pod name: {gateway_pod}")
-
-    print("\n========= GATEWAY POD LOGS =========")
-    logs = machine.succeed(f"kubectl logs {gateway_pod} 2>&1 || echo 'No logs yet'")
-    print(logs)
-    print("====================================\n")
-
-    # Теперь ждём Running статус
     machine.wait_until_succeeds("kubectl get pods | grep gateway | grep Running")
     machine.wait_until_succeeds("kubectl get pods | grep greeter | grep Running")
     machine.wait_until_succeeds("kubectl get pods | grep shell | grep Running")
 
-    print("Checking Gateway Health on :8085...")
-    machine.wait_until_succeeds("curl -sSf http://localhost:8085/health | grep 'ok'", timeout=30)
+    print("Waiting for Gateway Service on port 30085...")
+    machine.sleep(10)
+    machine.wait_until_succeeds("nc -z localhost 30085")
 
-    print("Checking Gateway -> Greeter proxy on :8085...")
-    output = machine.succeed("curl -s 'http://localhost:8085/api/greeter/api/hello?name=NixOS'")
+    print("Checking Gateway Health on :30085...")
+    machine.wait_until_succeeds("curl -sSf http://localhost:30085/health | grep 'ok'", timeout=60)
+
+    print("Checking Gateway -> Greeter proxy on :30085...")
+    output = machine.succeed("curl -v -s 'http://localhost:30085/api/greeter/api/hello?name=NixOS'")
 
     print(f"\n========= RESPONSE FROM GATEWAY =========\n{output}\n=========================================\n")
 

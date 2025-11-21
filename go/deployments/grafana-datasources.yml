@@ -7,7 +7,7 @@ datasources:
     url: http://victoriametrics:8428
     isDefault: true
     jsonData:
-      # Критическая настройка для перехода Metrics -> Traces
+      # ЭТА НАСТРОЙКА КЛЮЧЕВАЯ для Metrics -> Traces
       exemplarTraceIdDestinations:
         - datasourceUid: Tempo
           name: TraceID
@@ -22,6 +22,7 @@ datasources:
     isDefault: false
     jsonData:
       httpMethod: GET
+      # ЭТА НАСТРОЙКА КЛЮЧЕВАЯ для Traces -> Logs
       tracesToLogs:
         datasourceUid: 'Loki'
         tags: ['job', 'instance', 'pod', 'namespace']
@@ -38,8 +39,10 @@ datasources:
     access: proxy
     url: http://loki:3100
     jsonData:
+      # ЭТА НАСТРОЙКА КЛЮЧЕВАЯ для Logs -> Traces
       derivedFields:
         - datasourceUid: Tempo
           matcherRegex: "traceID=(\\w+)"
           name: TraceID
           url: "$${__value.raw}"
+    editable: true
