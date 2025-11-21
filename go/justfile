@@ -3,6 +3,13 @@ default:
 
 # --- INSTALL & DEPS ---
 
+link-pkg:
+    @echo "🔗 Linking shared 'pkg' to backends..."
+    # Shell Backend (Depth: 2 -> ../../pkg)
+    cd shell/backend && rm -rf pkg && ln -sf ../../pkg pkg
+    # Greeter Backend (Depth: 3 -> ../../../pkg)
+    cd services/greeter/backend && rm -rf pkg && ln -sf ../../../pkg pkg
+
 deps: deps-shell deps-greeter
 
 deps-shell:
@@ -230,7 +237,8 @@ info:
 
 # --- QUICK START ---
 
-setup: deps gen-proto config-init
+# Было: setup: deps gen-proto config-init
+setup: link-pkg deps gen-proto config-init
     @echo "✅ Project setup complete!"
     @just info
 
