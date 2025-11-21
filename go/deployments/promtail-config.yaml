@@ -9,40 +9,74 @@ clients:
   - url: http://loki:3100/loki/api/v1/push
 
 scrape_configs:
-  # Логи из файлов на хосте (твои Go сервисы пишут в /tmp/*.log)
-  - job_name: host_services
+  # Gateway логи
+  - job_name: gateway
     static_configs:
       - targets:
           - localhost
         labels:
-          job: host_services
-          __path__: /tmp/*.log
+          job: gateway
+          service: gateway-service
+          __path__: /tmp/gateway.log
     pipeline_stages:
-      # Парсим JSON логи от Go сервисов
       - json:
           expressions:
             level: level
-            service: service
+            msg: msg
+            method: method
+            path: path
+            response_code: response_code
+            duration: duration
+            x_request_id: x_request_id
+            x_b3_traceid: x_b3_traceid
+            time: start_time
+      - labels:
+          level:
+      - timestamp:
+          source: time
+          format: RFC3339
+          action_on_failure: skip
+
+  # Greeter логи
+  - job_name: greeter
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: greeter
+          service: greeter-service
+          __path__: /tmp/greeter.log
+    pipeline_stages:
+      - json:
+          expressions:
+            level: level
             msg: msg
             time: time
       - labels:
           level:
-          service:
       - timestamp:
           source: time
           format: RFC3339Nano
+          action_on_failure: skip
 
-  # Логи из Docker контейнеров
-  - job_name: docker
-    docker_sd_configs:
-      - host: unix:///var/run/docker.sock
-        refresh_interval: 5s
-        filters:
-          - name: name
-            values: ["deployments*"]
-    relabel_configs:
-      - source_labels: ['__meta_docker_container_name']
-        regex: '/(.*)'
-        target_label: 'container'
-      - source_labels: ['__meta_docker_container_log_stream']
-        target_label: 'stream'
+  # Shell логи
+  - job_name: shell
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: shell
+          service: shell-service
+          __path__: /tmp/shell.log
+    pipeline_stages:
+      - json:
+          expressions:
+            level: level
+            msg: msg
+            time: time
+      - labels:
+          level:
+      - timestamp:
+          source: time
+          format: RFC3339Nano
+          action_on_failure: skip

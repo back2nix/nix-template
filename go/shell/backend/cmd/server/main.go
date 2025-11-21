@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
-	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
+	"shell/pkg/logger"
 	"shell/pkg/telemetry"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -25,46 +27,79 @@ func main() {
 		staticDir = "./static"
 	}
 
-	// Адрес коллектора Tempo (OTLP gRPC)
-	// В docker-compose это host.docker.internal:4317 или tempo:4317 (если в одной сети)
+	logLevel := os.Getenv("LOG_LEVEL")
+	if logLevel == "" {
+		logLevel = "info"
+	}
+
+	// 2. Инициализируем структурированный логгер (Loki friendly)
+	logger.Init("shell-service", logLevel)
+	ctx := context.Background()
+	logger.Info(ctx, "🚀 Starting Shell Service",
+		"env", os.Getenv("APP_ENV"),
+		"port", port,
+		"static_dir", staticDir,
+	)
+
+	// 3. Адрес коллектора Tempo (OTLP gRPC)
 	otelCollector := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 	if otelCollector == "" {
-		// Fallback для локального запуска вне контейнера
 		otelCollector = "127.0.0.1:4317"
 	}
 
-	// 2. Инициализация Observability (Tracing)
-	ctx := context.Background()
+	// 4. Инициализация Observability (Tracing)
 	shutdownTracer, err := telemetry.InitTracer(ctx, "shell-service", otelCollector)
 	if err != nil {
-		log.Printf("⚠️ Failed to init tracer: %v", err)
+		logger.Error(ctx, "Failed to init tracer", "error", err)
 	} else {
-		log.Printf("✅ Tracing initialized (sending to %s)", otelCollector)
+		logger.Info(ctx, "✅ Tracing initialized", "collector", otelCollector)
 		defer func() {
-			_ = shutdownTracer(ctx)
+			if err := shutdownTracer(ctx); err != nil {
+				logger.Error(ctx, "Failed to shutdown tracer", "error", err)
+			}
 		}()
 	}
 
-	// 3. Роутер
+	// 5. Роутер
 	mux := http.NewServeMux()
 
-	// Метрики (обычно не трейсим)
+	// Метрики (для VictoriaMetrics)
 	mux.Handle("/metrics", promhttp.Handler())
 
-	// Файловый сервер
-	fs := http.FileServer(http.Dir(staticDir))
+	// Health check с логированием
+	healthHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		logger.Info(r.Context(), "Health check request",
+			"method", r.Method,
+			"remote_addr", r.RemoteAddr,
+		)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"healthy","service":"shell"}`))
+	})
+	mux.Handle("/health", otelhttp.NewHandler(healthHandler, "HTTP /health"))
 
-	// Оборачиваем раздачу статики в OpenTelemetry Middleware.
-	// otelhttp автоматически извлечет контекст трейса из заголовков Envoy.
+	// Файловый сервер с трейсингом и логированием
+	fs := http.FileServer(http.Dir(staticDir))
 	otelHandler := otelhttp.NewHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Логируем для отладки (в реальном проде лучше использовать структурный логгер)
-		log.Printf("[%s] %s %s", r.Method, r.URL.Path, r.RemoteAddr)
+		// Логируем каждый запрос (для статики можно использовать debug level)
+		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+			logger.Info(r.Context(), "Serving static content",
+				"method", r.Method,
+				"path", r.URL.Path,
+				"remote_addr", r.RemoteAddr,
+			)
+		} else {
+			logger.Debug(r.Context(), "Serving static asset",
+				"method", r.Method,
+				"path", r.URL.Path,
+			)
+		}
 		fs.ServeHTTP(w, r)
 	}), "HTTP Static Content")
 
-	// Регистрируем на корневой путь
 	mux.Handle("/", otelHandler)
 
+	// 6. HTTP Server
 	server := &http.Server{
 		Addr:         ":" + port,
 		Handler:      mux,
@@ -72,10 +107,30 @@ func main() {
 		WriteTimeout: 10 * time.Second,
 	}
 
-	log.Printf("🚀 Shell (Host) listening at :%s", port)
-	log.Printf("📈 Metrics available at :%s/metrics", port)
+	// 7. Запуск сервера в горутине
+	go func() {
+		logger.Info(ctx, "✅ Shell HTTP listening", "port", port)
+		logger.Info(ctx, "📈 Metrics available", "endpoint", "http://localhost:"+port+"/metrics")
 
-	if err := server.ListenAndServe(); err != nil {
-		log.Fatal(err)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error(ctx, "Failed to serve HTTP", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	// 8. Graceful shutdown
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	logger.Info(ctx, "Shutting down server...")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		logger.Error(ctx, "HTTP shutdown error", "error", err)
 	}
+
+	logger.Info(ctx, "Server stopped")
 }

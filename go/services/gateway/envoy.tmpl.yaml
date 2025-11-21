@@ -20,7 +20,6 @@ static_resources:
           stat_prefix: ingress_http
 
           # --- TRACING (Zipkin -> Tempo) ---
-          # Envoy генерирует Request ID и отправляет спаны в Zipkin (Tempo)
           generate_request_id: true
           tracing:
             provider:
@@ -39,17 +38,21 @@ static_resources:
               "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
               log_format:
                 json_format:
-                  start_time: "%START_TIME%"
+                  time: "%START_TIME%"
+                  service: "gateway-service"
+                  level: "INFO"
+                  msg: "access_log"
                   method: "%REQ(:METHOD)%"
                   path: "%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%"
                   protocol: "%PROTOCOL%"
                   response_code: "%RESPONSE_CODE%"
                   duration: "%DURATION%"
                   x_request_id: "%REQ(X-REQUEST-ID)%"
-                  x_b3_traceid: "%REQ(X-B3-TRACEID)%" # Полезно для отладки трейсинга
+                  x_b3_traceid: "%REQ(X-B3-TRACEID)%"
                   upstream_cluster: "%UPSTREAM_CLUSTER%"
                   upstream_host: "%UPSTREAM_HOST%"
                   user_agent: "%REQ(USER-AGENT)%"
+                  remote_addr: "%DOWNSTREAM_REMOTE_ADDRESS%"
 
           common_http_protocol_options:
             idle_timeout: 60s
@@ -90,7 +93,6 @@ static_resources:
                       value: "application/json"
 
               # --- Route: Shell Service (Frontend Host) ---
-              # Перенаправляем корневые запросы на Shell Service
               - match:
                   prefix: "/"
                 route:
@@ -134,7 +136,6 @@ static_resources:
         - endpoint:
             address:
               socket_address:
-                # Shell работает в хостовой сети или проброшен через host.docker.internal
                 address: host.docker.internal
                 port_value: 9002
 
