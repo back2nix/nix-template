@@ -6,25 +6,27 @@
   "links": [],
   "panels": [
     {
-      "title": "Gateway RPS (Envoy Traffic)",
+      "title": "Gateway Traffic (Requests per Minute)",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
-          "expr": "rate(envoy_http_downstream_rq_total{job=~\"envoy.*|gateway.*\"}[1m])",
-          "legendFormat": "Total Requests ({{ envoy_response_code_class }})"
+          "expr": "increase(envoy_http_downstream_rq_total{job=\"envoy-gateway\"}[1m])",
+          "legendFormat": "Reqs/min ({{ envoy_response_code_class }})"
         }
       ],
       "fieldConfig": {
         "defaults": {
           "custom": {
             "lineWidth": 2,
-            "fillOpacity": 10
+            "fillOpacity": 15,
+            "showPoints": "auto"
           },
-          "unit": "reqps"
+          "unit": "short"
         }
-      }
+      },
+      "description": "Shows absolute number of requests per minute (increase). Better for low traffic dev environments."
     },
     {
       "title": "Go Memory Details",
@@ -67,6 +69,7 @@
             "mode": "absolute",
             "steps": [
               { "color": "green", "value": null },
+              { "color": "orange", "value": 100 },
               { "color": "red", "value": 1000 }
             ]
           }
@@ -82,21 +85,27 @@
         {
             "refId": "A",
             "queryType": "nativeSearch",
-            "limit": 10
+            "limit": 20
         }
       ],
-      "description": "List of recent request traces. Click traceID to view details."
+      "description": "List of recent traces. If empty, generate traffic."
     },
     {
-      "title": "Live Logs (All Levels)",
+      "title": "Live Logs",
       "type": "logs",
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 16 },
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "Loki" },
-          "expr": "{job=~\"$service|envoy-gateway\"}"
+          "expr": "{job=~\"$service|envoy-gateway\"} | json"
         }
-      ]
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending"
+      }
     }
   ],
   "refresh": "5s",
@@ -119,7 +128,7 @@
     ]
   },
   "time": { "from": "now-15m", "to": "now" },
-  "title": "Microservices Overview (Fixed v2)",
+  "title": "Microservices Overview (Final)",
   "uid": "microservices-overview",
-  "version": 4
+  "version": 5
 }

@@ -9,13 +9,14 @@ clients:
   - url: http://loki:3100/loki/api/v1/push
 
 scrape_configs:
-  # Gateway логи
+  # --- Gateway Logs ---
   - job_name: gateway
     static_configs:
       - targets:
           - localhost
         labels:
-          job: gateway
+          # ИСПРАВЛЕНО: job должен совпадать с тем, что в Prometheus/Collector
+          job: envoy-gateway
           service: gateway-service
           __path__: /tmp/gateway.log
     pipeline_stages:
@@ -28,7 +29,8 @@ scrape_configs:
             response_code: response_code
             duration: duration
             x_request_id: x_request_id
-            x_b3_traceid: x_b3_traceid
+            # ИСПРАВЛЕНО: В Envoy конфиге поле называется traceID
+            traceID: traceID
             time: start_time
       - labels:
           level:
@@ -37,13 +39,14 @@ scrape_configs:
           format: RFC3339
           action_on_failure: skip
 
-  # Greeter логи
+  # --- Greeter Logs ---
   - job_name: greeter
     static_configs:
       - targets:
           - localhost
         labels:
-          job: greeter
+          # ИСПРАВЛЕНО: greeter -> greeter-service
+          job: greeter-service
           service: greeter-service
           __path__: /tmp/greeter.log
     pipeline_stages:
@@ -52,6 +55,8 @@ scrape_configs:
             level: level
             msg: msg
             time: time
+            # Добавляем TraceID, если он появится в логах Go
+            traceID: traceID
       - labels:
           level:
       - timestamp:
@@ -59,13 +64,14 @@ scrape_configs:
           format: RFC3339Nano
           action_on_failure: skip
 
-  # Shell логи
+  # --- Shell Logs ---
   - job_name: shell
     static_configs:
       - targets:
           - localhost
         labels:
-          job: shell
+          # ИСПРАВЛЕНО: shell -> shell-service
+          job: shell-service
           service: shell-service
           __path__: /tmp/shell.log
     pipeline_stages:
@@ -74,6 +80,7 @@ scrape_configs:
             level: level
             msg: msg
             time: time
+            traceID: traceID
       - labels:
           level:
       - timestamp:
