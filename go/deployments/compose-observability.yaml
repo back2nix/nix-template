@@ -12,7 +12,6 @@ services:
     volumes:
       - vmdata:/storage
       - ./prometheus.yml:/prometheus.yml
-    # Теперь это сработает гарантированно
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -21,6 +20,19 @@ services:
     ports:
       - "3100:3100"
     command: ["-config.file=/etc/loki/local-config.yaml"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  promtail:
+    image: grafana/promtail:2.9.2
+    volumes:
+      # Доступ к логам на хосте
+      - /tmp:/tmp:ro
+      - ./promtail-config.yaml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
     extra_hosts:
       - "host.docker.internal:host-gateway"
 

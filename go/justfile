@@ -5,7 +5,6 @@ default:
 
 deps: deps-shell deps-greeter
 
-# deps-gateway удален, так как Go модули там больше не нужны
 deps-shell:
     cd shell/frontend && yarn install
     cd shell/backend && go mod tidy && gomod2nix
@@ -33,22 +32,21 @@ dev-all:
 
 dev-gateway:
     @echo "🌐 Starting Envoy Gateway on :8080..."
-    # Используем envsubst для генерации конфига и запускаем envoy
     @export GATEWAY_HTTP_PORT=8080 GREETER_HOST=localhost GREETER_PORT=8081 && \
     envsubst < services/gateway/envoy.tmpl.yaml > /tmp/envoy.yaml && \
-    envoy -c /tmp/envoy.yaml --service-cluster gateway --service-node dev
+    envoy -c /tmp/envoy.yaml --service-cluster gateway --service-node dev 2>&1 | tee -a /tmp/gateway.log
 
 dev-shell:
     @echo "🖥  Starting Shell (Host) on :9002..."
     cd shell/frontend && yarn build
     @echo "Shell frontend built, starting backend..."
-    cd shell/backend && SHELL_HTTP_PORT=9002 SHELL_STATIC_DIR=../frontend/dist APP_ENV=dev go run cmd/server/main.go
+    cd shell/backend && SHELL_HTTP_PORT=9002 SHELL_STATIC_DIR=../frontend/dist APP_ENV=dev go run cmd/server/main.go 2>&1 | tee -a /tmp/shell.log
 
 dev-greeter:
     @echo "👋 Starting Greeter Service..."
     cd services/greeter/frontend && yarn build
     @echo "Greeter frontend built, starting backend..."
-    cd services/greeter/backend && APP_ENV=dev go run cmd/server/main.go
+    cd services/greeter/backend && APP_ENV=dev go run cmd/server/main.go 2>&1 | tee -a /tmp/greeter.log
 
 # --- BUILD (Nix) ---
 
@@ -68,7 +66,6 @@ build-greeter:
 
 test:
     @echo "🧪 Running tests..."
-    # Gateway тестов Go больше нет
     cd services/greeter/backend && go test ./... || true
     nix flake check -L
 
@@ -94,12 +91,76 @@ restart: kill-all
     @just dev-all
 
 up-obs:
-    @echo "🔭 Starting Observability Stack (VM, Loki, Tempo, Grafana)..."
+    @echo "🔭 Starting Observability Stack (VM, Loki, Promtail, Tempo, Grafana)..."
     cd deployments && docker-compose -f compose-observability.yaml up -d
     @echo "📊 Grafana: http://localhost:3001"
+    @echo "📊 Loki: http://localhost:3100"
+    @echo "📊 VictoriaMetrics: http://localhost:8428"
 
 down-obs:
     cd deployments && docker-compose -f compose-observability.yaml down
+
+logs-obs:
+    @echo "📋 Observability stack logs:"
+    cd deployments && docker-compose -f compose-observability.yaml logs -f
+
+# --- LOKI QUERIES (исправлено для GNU date) ---
+
+logs-all:
+    @echo "📋 All logs from Loki (last 1 hour):"
+    @curl -G -s "http://localhost:3100/loki/api/v1/query_range" \
+        --data-urlencode 'query={job=~".+"}' \
+        --data-urlencode "start=$(date -u -d '1 hour ago' +%s)000000000" \
+        --data-urlencode "end=$(date -u +%s)000000000" | jq -r '.data.result[]?.values[]?[1]' 2>/dev/null || echo "No logs found"
+
+logs-greeter:
+    @echo "📋 Greeter service logs (last 1 hour):"
+    @curl -G -s "http://localhost:3100/loki/api/v1/query_range" \
+        --data-urlencode 'query={service="greeter-service"}' \
+        --data-urlencode "start=$(date -u -d '1 hour ago' +%s)000000000" \
+        --data-urlencode "end=$(date -u +%s)000000000" | jq -r '.data.result[]?.values[]?[1]' 2>/dev/null || echo "No logs found"
+
+logs-gateway:
+    @echo "📋 Gateway logs (last 1 hour):"
+    @curl -G -s "http://localhost:3100/loki/api/v1/query_range" \
+        --data-urlencode 'query={container=~".*envoy.*|.*gateway.*"}' \
+        --data-urlencode "start=$(date -u -d '1 hour ago' +%s)000000000" \
+        --data-urlencode "end=$(date -u +%s)000000000" | jq -r '.data.result[]?.values[]?[1]' 2>/dev/null || echo "No logs found"
+
+logs-errors:
+    @echo "📋 All ERROR logs (last 1 hour):"
+    @curl -G -s "http://localhost:3100/loki/api/v1/query_range" \
+        --data-urlencode 'query={job=~".+"} |~ "(?i)error"' \
+        --data-urlencode "start=$(date -u -d '1 hour ago' +%s)000000000" \
+        --data-urlencode "end=$(date -u +%s)000000000" | jq -r '.data.result[]?.values[]?[1]' 2>/dev/null || echo "No logs found"
+
+# --- LOCAL FILE LOGS ---
+
+logs-gateway-local:
+    @tail -f /tmp/gateway.log 2>/dev/null || echo "No gateway logs yet. Start with: just dev-gateway"
+
+logs-greeter-local:
+    @tail -f /tmp/greeter.log 2>/dev/null || echo "No greeter logs yet. Start with: just dev-greeter"
+
+logs-shell-local:
+    @tail -f /tmp/shell.log 2>/dev/null || echo "No shell logs yet. Start with: just dev-shell"
+
+logs-local-all:
+    @echo "📋 Tailing all local service logs..."
+    @tail -f /tmp/*.log 2>/dev/null || echo "No logs yet. Start services with: just dev-all"
+
+# Проверить что Promtail собирает логи
+logs-promtail:
+    @echo "📋 Promtail logs:"
+    @docker logs deployments-promtail-1 2>&1 | tail -50
+
+# Проверить статус Loki
+loki-status:
+    @echo "📋 Loki status:"
+    @curl -s http://localhost:3100/ready && echo "✅ Loki is ready" || echo "❌ Loki is not ready"
+    @echo ""
+    @echo "📋 Loki labels:"
+    @curl -s http://localhost:3100/loki/api/v1/labels | jq
 
 # --- DEVELOPMENT HELPERS ---
 
@@ -108,12 +169,6 @@ watch-gateway:
 
 watch-greeter:
     cd services/greeter/backend && find . -name "*.go" | entr -r go run cmd/server/main.go
-
-logs-gateway:
-    tail -f /tmp/gateway.log || echo "No gateway logs"
-
-logs-greeter:
-    tail -f /tmp/greeter.log || echo "No greeter logs"
 
 # --- CONFIG MANAGEMENT ---
 
@@ -144,6 +199,12 @@ info:
     @echo "  - Shell:     :9002 (HTTP)"
     @echo "  - Greeter:   :8081 (HTTP), :50051 (gRPC)"
     @echo ""
+    @echo "Observability:"
+    @echo "  - Grafana:         http://localhost:3001"
+    @echo "  - Loki:            http://localhost:3100"
+    @echo "  - VictoriaMetrics: http://localhost:8428"
+    @echo "  - Tempo:           http://localhost:3200"
+    @echo ""
     @echo "Endpoints:"
     @echo "  - http://localhost:8080/health         (Gateway health)"
     @echo "  - http://localhost:8080/api/greeter/*  (Proxy to Greeter)"
@@ -151,21 +212,17 @@ info:
     @echo "  - http://localhost:8081/health         (Greeter health)"
     @echo "  - http://localhost:9002                (Shell/Host)"
     @echo ""
-    @echo "Environments:"
-    @echo "  - dev      (configs/dev.env)"
-    @echo "  - staging  (configs/staging.env)"
-    @echo "  - prod     (configs/prod.env)"
-    @echo "  - local    (configs/local.env - create with 'just config-init')"
+    @echo "Local Logs:"
+    @echo "  - /tmp/gateway.log   (Gateway stdout)"
+    @echo "  - /tmp/greeter.log   (Greeter stdout)"
+    @echo "  - /tmp/shell.log     (Shell stdout)"
     @echo ""
-    @echo "Commands:"
-    @echo "  just deps          - Install all dependencies"
-    @echo "  just dev-all       - Start all services (dev mode)"
-    @echo "  just dev-staging   - Start in staging mode"
-    @echo "  just test          - Run all tests"
-    @echo "  just grpc-test     - Test gRPC endpoint"
-    @echo "  just build         - Build with Nix"
-    @echo "  just clean         - Clean artifacts"
-    @echo "  just config-init   - Create local.env from example"
+    @echo "Log Commands:"
+    @echo "  just logs-local-all    - Tail all local logs"
+    @echo "  just logs-greeter      - Query Loki for greeter logs"
+    @echo "  just logs-gateway      - Query Loki for gateway logs"
+    @echo "  just logs-promtail     - Check Promtail status"
+    @echo "  just loki-status       - Check Loki status"
 
 # --- QUICK START ---
 
@@ -175,7 +232,5 @@ setup: deps gen-proto config-init
 
 start: dev-all
 
-
 check:
   nix flake check -L
-
