@@ -17,24 +17,23 @@ static_resources:
       - name: envoy.filters.network.http_connection_manager
         typed_config:
           "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
-          # CHANGED: 'ingress_http' -> 'http' to generate 'envoy_http_...' metrics matching Dashboard
           stat_prefix: http
 
-          # --- TRACING (Enabled -> OTel Collector) ---
+          # --- TRACING (OTLP gRPC) ---
           generate_request_id: true
           tracing:
             provider:
-              name: envoy.tracers.zipkin
+              name: envoy.tracers.opentelemetry
               typed_config:
-                "@type": type.googleapis.com/envoy.config.trace.v3.ZipkinConfig
-                collector_cluster: otel_collector
-                collector_endpoint: "/api/v2/spans"
-                shared_span_context: false
-                collector_endpoint_version: HTTP_JSON
+                "@type": type.googleapis.com/envoy.config.trace.v3.OpenTelemetryConfig
+                grpc_service:
+                  envoy_grpc:
+                    cluster_name: otel_collector_grpc
+                  timeout: 0.250s
+                service_name: gateway-proxy
 
-          # --- ACCESS LOGS (JSON format for Loki) ---
+          # --- ACCESS LOGS ---
           access_log:
-          # CHANGED: stdout -> file so Promtail can read it from /tmp/gateway.log
           - name: envoy.access_loggers.file
             typed_config:
               "@type": type.googleapis.com/envoy.extensions.access_loggers.file.v3.FileAccessLog
@@ -51,7 +50,7 @@ static_resources:
                   response_code: "%RESPONSE_CODE%"
                   duration: "%DURATION%"
                   x_request_id: "%REQ(X-REQUEST-ID)%"
-                  traceID: "%REQ(x-b3-traceid)%"
+                  traceID: "%REQ(traceparent)%"
                   upstream_cluster: "%UPSTREAM_CLUSTER%"
                   upstream_host: "%UPSTREAM_HOST%"
                   user_agent: "%REQ(USER-AGENT)%"
@@ -144,17 +143,19 @@ static_resources:
                 address: 127.0.0.1
                 port_value: 9002
 
-  # --- CLUSTER: OTel Collector (via Zipkin Protocol) ---
-  - name: otel_collector
+  # --- CLUSTER: OTel Collector (OTLP gRPC) ---
+  - name: otel_collector_grpc
     connect_timeout: 1s
     type: STRICT_DNS
     lb_policy: ROUND_ROBIN
+    http2_protocol_options: {}
     load_assignment:
-      cluster_name: otel_collector
+      cluster_name: otel_collector_grpc
       endpoints:
       - lb_endpoints:
         - endpoint:
             address:
               socket_address:
-                address: 127.0.0.1
-                port_value: 9411
+                # CHANGED: 127.0.0.1 -> otel-collector (имя сервиса в docker-compose)
+                address: otel-collector
+                port_value: 4317

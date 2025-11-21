@@ -6,6 +6,15 @@ receivers:
         endpoint: "0.0.0.0:4317"
       http:
         endpoint: "0.0.0.0:4318"
+        # --- ДОБАВИТЬ ЭТОТ БЛОК ---
+        cors:
+          allowed_origins:
+            - "http://localhost:*"
+            - "http://127.0.0.1:*"
+            - "*" # Для разработки можно разрешить всем
+          allowed_headers: ["*"]
+          max_age: 7200
+        # --------------------------
 
   # Прием данных от Envoy (Zipkin Tracing legacy support)
   zipkin:

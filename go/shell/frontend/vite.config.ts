@@ -17,5 +17,24 @@ export default defineConfig({
   ],
   build: {
     target: 'esnext'
+  },
+  optimizeDeps: {
+    include: [
+      '@opentelemetry/api',
+      '@opentelemetry/sdk-trace-web',
+      '@opentelemetry/sdk-trace-base',
+      '@opentelemetry/resources',
+      '@opentelemetry/semantic-conventions',
+      '@opentelemetry/exporter-trace-otlp-http',
+      '@opentelemetry/instrumentation-fetch',
+      '@opentelemetry/instrumentation-xml-http-request',
+      '@opentelemetry/context-zone'
+    ]
+  },
+  // Иногда нужно явно указать resolve alias, если пакеты двоятся
+  resolve: {
+    alias: {
+      '@': '/src'
+    }
   }
 })

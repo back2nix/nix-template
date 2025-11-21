@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"go.opentelemetry.io/contrib/propagators/b3"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/propagation"
@@ -60,10 +61,14 @@ func InitTracer(ctx context.Context, serviceName string, collectorAddr string) (
 	// 5. Устанавливаем глобальные провайдеры
 	otel.SetTracerProvider(tracerProvider)
 
-	// W3C Trace Context (стандарт) + Baggage (для передачи кастомных данных)
+	// UPDATED: Композитный провайдер.
+	// 1. TraceContext (W3C) - стандарт, который теперь шлет Envoy (благодаря изменениям выше).
+	// 2. Baggage - для передачи кастомных данных.
+	// 3. B3 - для обратной совместимости, если где-то проскочит старый заголовок.
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
 		propagation.TraceContext{},
 		propagation.Baggage{},
+		b3.New(),
 	))
 
 	// Возвращаем функцию для шатдауна

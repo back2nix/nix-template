@@ -46,6 +46,9 @@ schema = 3
   [mod."go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"]
     version = "v0.63.0"
     hash = "sha256-kDRjKy2nJut38dHZbZy+haqSAh8qFgtTMqfe4y2WhCA="
+  [mod."go.opentelemetry.io/contrib/propagators/b3"]
+    version = "v1.38.0"
+    hash = "sha256-a0wX6pa3BfCK3z5tEFFrh3za8MISvROzGz8B59lyWKY="
   [mod."go.opentelemetry.io/otel"]
     version = "v1.38.0"
     hash = "sha256-OU4EVEGwbopbYZLDBfAelR/4yjzfV+UVp4UFt3UvkOE="
