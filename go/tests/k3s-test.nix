@@ -82,7 +82,6 @@ let
             imagePullPolicy: Never
             command: ["/bin/start-gateway"]
             env:
-            # ИЗМЕНЕНИЕ: Используем порт 8085 для тестов, чтобы избежать конфликта с kubectl (8080)
             - { name: GATEWAY_HTTP_PORT, value: "8085" }
             - { name: GREETER_HOST, value: "127.0.0.1" }
             - { name: GREETER_PORT, value: "8081" }
@@ -104,11 +103,9 @@ in pkgs.testers.nixosTest {
       ];
     };
 
-    # Явно задаем KUBECONFIG, чтобы kubectl сразу знал куда идти (на 6443), а не гадал на 8080
     environment.variables.KUBECONFIG = "/etc/rancher/k3s/k3s.yaml";
 
     environment.systemPackages = with pkgs; [ kubectl jq ];
-    # ИЗМЕНЕНИЕ: Добавили 8085 в firewall
     networking.firewall.allowedTCPPorts = [ 6443 8080 8081 8085 9002 50051 ];
     virtualisation.memorySize = 2048;
     virtualisation.diskSize = 4096;
@@ -118,8 +115,6 @@ in pkgs.testers.nixosTest {
     start_all()
 
     machine.wait_for_unit("k3s")
-
-    # Ждем появления файла конфигурации, чтобы kubectl не ломился на 8080
     machine.wait_until_succeeds("test -f /etc/rancher/k3s/k3s.yaml")
 
     machine.succeed("${pauseImage} | ctr -n k8s.io image import -")
@@ -131,15 +126,36 @@ in pkgs.testers.nixosTest {
 
     machine.succeed("kubectl apply -f ${k8sManifests}")
 
+    # Ждем пока pod'ы создадутся
+    machine.wait_until_succeeds("kubectl get pods | grep greeter")
+    machine.wait_until_succeeds("kubectl get pods | grep shell")
+    machine.wait_until_succeeds("kubectl get pods | grep gateway")
+
+    # Даём время на первый запуск gateway
+    import time
+    time.sleep(5)
+
+    # DEBUGGING: Получаем имя и логи gateway pod'а
+    print("\n========= GATEWAY POD STATUS =========")
+    gateway_status = machine.succeed("kubectl get pods | grep gateway")
+    print(gateway_status)
+
+    gateway_pod = machine.succeed("kubectl get pods -o name | grep gateway").strip()
+    print(f"Gateway pod name: {gateway_pod}")
+
+    print("\n========= GATEWAY POD LOGS =========")
+    logs = machine.succeed(f"kubectl logs {gateway_pod} 2>&1 || echo 'No logs yet'")
+    print(logs)
+    print("====================================\n")
+
+    # Теперь ждём Running статус
     machine.wait_until_succeeds("kubectl get pods | grep gateway | grep Running")
     machine.wait_until_succeeds("kubectl get pods | grep greeter | grep Running")
     machine.wait_until_succeeds("kubectl get pods | grep shell | grep Running")
 
-    # ИЗМЕНЕНИЕ: Проверяем health на порту 8085
     print("Checking Gateway Health on :8085...")
     machine.wait_until_succeeds("curl -sSf http://localhost:8085/health | grep 'ok'", timeout=30)
 
-    # ИЗМЕНЕНИЕ: Проверяем прокси на порту 8085
     print("Checking Gateway -> Greeter proxy on :8085...")
     output = machine.succeed("curl -s 'http://localhost:8085/api/greeter/api/hello?name=NixOS'")
 

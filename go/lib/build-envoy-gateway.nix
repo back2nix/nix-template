@@ -17,12 +17,17 @@ let
     echo "   Port: $GATEWAY_HTTP_PORT"
     echo "   Upstream Greeter: $GREETER_HOST:$GREETER_PORT"
 
-    # Создаем временный конфиг с подставленными значениями
-    # Используем envsubst из пакета gettext
-    ${pkgs.gettext}/bin/envsubst < ${envoyConfig} > ./envoy.yaml
+    # Создаем /tmp если его нет
+    mkdir -p /tmp
+
+    # Создаем временный конфиг с подставленными значениями в /tmp
+    ENVOY_CONFIG_PATH="/tmp/envoy-${name}.yaml"
+    ${pkgs.gettext}/bin/envsubst < ${envoyConfig} > "$ENVOY_CONFIG_PATH"
+
+    echo "   Config generated at: $ENVOY_CONFIG_PATH"
 
     # Запускаем Envoy
-    exec ${pkgs.envoy}/bin/envoy -c ./envoy.yaml --service-cluster ${name} --service-node ${name}
+    exec ${pkgs.envoy}/bin/envoy -c "$ENVOY_CONFIG_PATH" --service-cluster ${name} --service-node ${name}
   '';
 
 in pkgs.symlinkJoin {
