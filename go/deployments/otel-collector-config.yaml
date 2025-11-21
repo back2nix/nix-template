@@ -6,7 +6,13 @@ receivers:
       http:
         endpoint: "0.0.0.0:4318"
         cors:
-          allowed_origins: ["*"]
+          # ИСПРАВЛЕНИЕ: Явный список разрешенных Origins вместо "*"
+          allowed_origins:
+            - "http://localhost:8080"
+            - "http://localhost:9002"
+            - "http://localhost:5173" # Vite dev server
+            - "http://127.0.0.1:8080"
+            - "http://127.0.0.1:9002"
           allowed_headers: ["*"]
           max_age: 7200
 
@@ -21,26 +27,29 @@ receivers:
           static_configs:
             - targets: ['0.0.0.0:8888']
 
-        # Исправлено: используем DNS имена K8s сервисов вместо host.docker.internal
+        # ВАЖНО: Эта конфигурация используется и в Docker (local dev), и в K3s (тесты).
+        # Для локальной разработки (Docker -> Host) Envoy может быть недоступен по имени "gateway".
+        # Если метрики Envoy в Grafana будут пустыми при локальном запуске,
+        # можно добавить "host.docker.internal:9901" (требует настройки в docker-compose).
         - job_name: 'envoy-gateway'
           scrape_interval: 5s
           metrics_path: /stats/prometheus
           static_configs:
-            - targets: ['gateway:9901']
+            - targets: ['gateway:9901', 'host.docker.internal:9901']
               labels:
                 service_name: 'gateway-proxy'
 
         - job_name: 'greeter-service'
           scrape_interval: 5s
           static_configs:
-            - targets: ['greeter:8081']
+            - targets: ['greeter:8081', 'host.docker.internal:8081']
               labels:
                 service_name: 'greeter-service'
 
         - job_name: 'shell-service'
           scrape_interval: 5s
           static_configs:
-            - targets: ['shell:9002']
+            - targets: ['shell:9002', 'host.docker.internal:9002']
               labels:
                 service_name: 'shell-service'
 
