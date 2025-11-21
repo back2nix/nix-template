@@ -29,24 +29,17 @@ func NewServer(cfg *config.Config, useCase *application.GreeterUseCase) *Server 
 		config:  cfg,
 	}
 
-	// --- OBSERVABILITY ---
-	// 1. Metrics Endpoint (для VictoriaMetrics)
+	// Observability
 	mux.Handle("/metrics", promhttp.Handler())
 
-	// 2. Tracing Middleware (Оборачиваем хендлеры)
-	// Обертка добавляет Span в трейс
 	handleGreet := http.HandlerFunc(s.HandleGreet)
 	mux.Handle("/api/hello", otelhttp.NewHandler(handleGreet, "HTTP /api/hello"))
 
 	handleHealth := http.HandlerFunc(s.HandleHealth)
 	mux.Handle("/health", otelhttp.NewHandler(handleHealth, "HTTP /health"))
 
-	// --- STATIC FILES ---
 	if cfg.Server.StaticDir != "" {
-		logger.Info(context.Background(), "📁 Serving static files", "dir", cfg.Server.StaticDir)
 		fs := http.FileServer(http.Dir(cfg.Server.StaticDir))
-
-		// Для статики трейсинг обычно не нужен, но можно добавить при желании
 		mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/" {
 				http.ServeFile(w, r, filepath.Join(cfg.Server.StaticDir, "index.html"))
@@ -56,27 +49,28 @@ func NewServer(cfg *config.Config, useCase *application.GreeterUseCase) *Server 
 		}))
 	}
 
-	// --- GLOBAL MIDDLEWARE ---
-	// CORS (можно тоже обернуть в otelhttp.NewHandler, если нужно трейсить весь пайплайн)
 	handler := middleware.CORS(mux)
 
+	// Слушаем на 0.0.0.0, чтобы было видно из Docker
+	addr := "0.0.0.0:" + cfg.Server.HTTPPort
+
 	s.server = &http.Server{
-		Addr:    ":" + cfg.Server.HTTPPort,
+		Addr:    addr,
 		Handler: handler,
 	}
 
 	return s
 }
 
+// SetAddr позволяет изменить адрес прослушивания (хелпер для main)
+func (s *Server) SetAddr(addr string) {
+	s.server.Addr = addr
+}
+
 func (s *Server) HandleGreet(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-
-	// Логируем событие (trace_id добавится автоматически через middleware логгера,
-	// если мы его напишем, или можно вытащить вручную. Пока просто структурный лог)
-	logger.Info(ctx, "Handling Greet Request",
-		"method", r.Method,
-		"url", r.URL.String(),
-	)
+	// Логируем с контекстом, чтобы TraceID попал в логи (если логгер поддерживает)
+	logger.Info(ctx, "Handling Greet Request", "method", r.Method, "url", r.URL.String())
 
 	name := r.URL.Query().Get("name")
 	if name == "" {

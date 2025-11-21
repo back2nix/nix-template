@@ -3,7 +3,6 @@ package telemetry
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"go.opentelemetry.io/contrib/propagators/b3"
 	"go.opentelemetry.io/otel"
@@ -16,68 +15,55 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// InitTracer инициализирует глобальный TracerProvider с экспортом в OTLP (OTel Collector)
+// InitTracer инициализирует глобальный TracerProvider
 func InitTracer(ctx context.Context, serviceName string, collectorAddr string) (func(context.Context) error, error) {
-	// 1. Создаем ресурс (описание сервиса)
-	// Убрали TelemetrySdkLanguageGo, так как он вызывает ошибки компиляции в разных версиях semconv
 	res, err := resource.New(ctx,
 		resource.WithAttributes(
 			semconv.ServiceName(serviceName),
-			semconv.ServiceVersion("0.1.0"), // Версию лучше прокидывать из build-args
+			semconv.ServiceVersion("0.1.0"),
 		),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create resource: %w", err)
 	}
 
-	// 2. Настраиваем соединение с коллектором
-	// Используем таймаут для соединения, чтобы не висеть вечно, если коллектор недоступен
-	dialCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	conn, err := grpc.DialContext(dialCtx, collectorAddr,
+	// 1. Подключение БЕЗ блокировки (WithBlock убрали)
+	// Теперь сервис стартанет, даже если коллектор лежит. Трейсы просто будут дропаться в фоне.
+	conn, err := grpc.DialContext(ctx, collectorAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock(),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gRPC connection to collector at %s: %w", collectorAddr, err)
 	}
 
-	// 3. Настраиваем экспортер
+	// 2. Экспортер
 	traceExporter, err := otlptracegrpc.New(ctx, otlptracegrpc.WithGRPCConn(conn))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create trace exporter: %w", err)
 	}
 
-	// 4. Настраиваем провайдер трейсов
-	// BatchSpanProcessor эффективнее для производительности, чем SimpleSpanProcessor
-	bsp := sdktrace.NewBatchSpanProcessor(traceExporter)
+	// 3. Провайдер
 	tracerProvider := sdktrace.NewTracerProvider(
 		sdktrace.WithSampler(sdktrace.AlwaysSample()),
 		sdktrace.WithResource(res),
-		sdktrace.WithSpanProcessor(bsp),
+		// Используем BatchSpanProcessor в проде, но для локальной разработки
+		// и отладки можно временно включить SimpleSpanProcessor, если трейсы теряются.
+		sdktrace.WithSpanProcessor(sdktrace.NewBatchSpanProcessor(traceExporter)),
 	)
 
-	// 5. Устанавливаем глобальные провайдеры
 	otel.SetTracerProvider(tracerProvider)
 
-	// UPDATED: Композитный провайдер.
-	// 1. TraceContext (W3C) - стандарт, который теперь шлет Envoy (благодаря изменениям выше).
-	// 2. Baggage - для передачи кастомных данных.
-	// 3. B3 - для обратной совместимости, если где-то проскочит старый заголовок.
+	// 4. Пропагаторы
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
 		propagation.TraceContext{},
 		propagation.Baggage{},
 		b3.New(),
 	))
 
-	// Возвращаем функцию для шатдауна
 	return func(ctx context.Context) error {
-		// Сначала останавливаем провайдер (сбрасываем батчи)
 		if err := tracerProvider.Shutdown(ctx); err != nil {
 			return err
 		}
-		// Затем закрываем соединение
 		return conn.Close()
 	}, nil
 }

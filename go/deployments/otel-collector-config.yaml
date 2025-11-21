@@ -1,46 +1,50 @@
 receivers:
-  # Прием данных от Go-сервисов (Traces & Metrics push)
   otlp:
     protocols:
       grpc:
         endpoint: "0.0.0.0:4317"
       http:
         endpoint: "0.0.0.0:4318"
-        # --- ДОБАВИТЬ ЭТОТ БЛОК ---
         cors:
           allowed_origins:
-            - "http://localhost:*"
-            - "http://127.0.0.1:*"
-            - "*" # Для разработки можно разрешить всем
-          allowed_headers: ["*"]
+            - "http://localhost:8080"
+            - "http://localhost:9002"
+            - "http://localhost:5173"
+            - "http://127.0.0.1:8080"
+            - "http://127.0.0.1:9002"
+          allowed_headers:
+            - "content-type"
+            - "x-grpc-web"
+            - "traceparent"
+            - "tracestate"
+            - "baggage"
+            - "*"
+          # allowed_methods УДАЛЕНО, так как вызывает краш в версии 0.88.0
           max_age: 7200
-        # --------------------------
 
-  # Прием данных от Envoy (Zipkin Tracing legacy support)
   zipkin:
     endpoint: "0.0.0.0:9411"
 
-  # Скрапинг метрик (вместо того чтобы VM скрапила сама)
-  # Это позволяет обогатить метрики метаданными OTel перед отправкой в VM
   prometheus:
     config:
       scrape_configs:
+        - job_name: 'otel-collector'
+          scrape_interval: 10s
+          static_configs:
+            - targets: ['0.0.0.0:8888']
         - job_name: 'envoy-gateway'
           scrape_interval: 5s
-          # CHANGED: Envoy exposes metrics here, not at /metrics
           metrics_path: /stats/prometheus
           static_configs:
             - targets: ['host.docker.internal:9901']
               labels:
                 service_name: 'gateway-proxy'
-
         - job_name: 'greeter-service'
           scrape_interval: 5s
           static_configs:
             - targets: ['host.docker.internal:8081']
               labels:
                 service_name: 'greeter-service'
-
         - job_name: 'shell-service'
           scrape_interval: 5s
           static_configs:
@@ -49,41 +53,35 @@ receivers:
                 service_name: 'shell-service'
 
 processors:
-  # Добавляет batching для оптимизации сети
   batch:
     timeout: 1s
     send_batch_size: 1024
 
-  # Пытается определить окружение (хост, OS и т.д.)
   resourcedetection:
     detectors: [env, system]
     timeout: 2s
     override: false
 
 exporters:
-  # Отправка трейсов в Tempo
   otlp/tempo:
     endpoint: "tempo:4317"
     tls:
       insecure: true
 
-  # Отправка метрик в VictoriaMetrics (Prometheus Remote Write)
   prometheusremotewrite/vm:
     endpoint: "http://victoriametrics:8428/api/v1/write"
-    # Включаем отправку Exemplars (связь метрик и трейсов)
     resource_to_telemetry_conversion:
       enabled: true
 
   debug:
-    verbosity: detailed
+    verbosity: normal
 
 service:
   pipelines:
     traces:
       receivers: [otlp, zipkin]
       processors: [batch, resourcedetection]
-      exporters: [otlp/tempo]
-
+      exporters: [otlp/tempo, debug]
     metrics:
       receivers: [otlp, prometheus]
       processors: [batch, resourcedetection]

@@ -3,22 +3,29 @@ import vue from '@vitejs/plugin-vue'
 import federation from '@originjs/vite-plugin-federation'
 
 export default defineConfig({
+  // Полифилл для process.env, который используется внутри OTel библиотек
+  define: {
+    'process.env': {}
+  },
   plugins: [
     vue(),
     federation({
       name: 'shell_app',
       remotes: {
-        // Указываем, где искать удаленный модуль
-        // В реальном проде localhost меняется на DNS имя сервиса
         greeter_app: 'http://localhost:8081/assets/remoteEntry.js',
       },
       shared: ['vue']
     })
   ],
   build: {
-    target: 'esnext'
+    target: 'esnext',
+    commonjsOptions: {
+      // Помогает Rollup правильно обрабатывать смешанные CJS/ESM модули OTel
+      transformMixedEsModules: true,
+    }
   },
   optimizeDeps: {
+    // Принудительно включаем пакеты OTel в пре-бандлинг
     include: [
       '@opentelemetry/api',
       '@opentelemetry/sdk-trace-web',
@@ -31,7 +38,6 @@ export default defineConfig({
       '@opentelemetry/context-zone'
     ]
   },
-  // Иногда нужно явно указать resolve alias, если пакеты двоятся
   resolve: {
     alias: {
       '@': '/src'
