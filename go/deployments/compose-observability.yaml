@@ -1,20 +1,38 @@
 version: '3.8'
 
 services:
+  # --- Central Intelligence ---
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.88.0
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    ports:
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+      - "9411:9411" # Zipkin (Envoy)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - victoriametrics
+      - tempo
+
+  # --- Metrics Storage ---
   victoriametrics:
     image: victoriametrics/victoria-metrics:v1.93.0
     ports:
       - "8428:8428"
+    # VM теперь пассивна, она только принимает данные от Collector
     command:
       - "--storageDataPath=/storage"
       - "--httpListenAddr=:8428"
-      - "--promscrape.config=/prometheus.yml"
+      - "--enableTCP6"
     volumes:
       - vmdata:/storage
-      - ./prometheus.yml:/prometheus.yml
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  # --- Logs ---
   loki:
     image: grafana/loki:2.9.2
     ports:
@@ -26,7 +44,6 @@ services:
   promtail:
     image: grafana/promtail:2.9.2
     volumes:
-      # Доступ к логам на хосте
       - /tmp:/tmp:ro
       - ./promtail-config.yaml:/etc/promtail/config.yml:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -36,16 +53,17 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  # --- Tracing Storage ---
   tempo:
     image: grafana/tempo:2.3.1
     ports:
       - "3200:3200"
-      - "4317:4317"
-      - "9411:9411"
+      # 4317 занят коллектором, Tempo слушаем внутри сети
     command: [ "-config.file=/etc/tempo.yaml" ]
     volumes:
       - ./tempo.yaml:/etc/tempo.yaml
 
+  # --- Visualization ---
   grafana:
     image: grafana/grafana:10.2.0
     ports:
@@ -53,10 +71,15 @@ services:
     environment:
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_FEATURE_TOGGLES_ENABLE=traceqlEditor
     volumes:
       - ./grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yaml
       - ./grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yaml
       - ./dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      - victoriametrics
+      - tempo
+      - loki
 
 volumes:
   vmdata:

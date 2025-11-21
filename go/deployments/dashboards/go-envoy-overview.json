@@ -6,48 +6,95 @@
   "links": [],
   "panels": [
     {
-      "title": "Gateway RPS (Envoy)",
+      "title": "Gateway RPS (Envoy Traffic)",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
-          "expr": "rate(envoy_http_downstream_rq_total[1m])",
-          "legendFormat": "{{ envoy_response_code_class }}"
+          "expr": "rate(envoy_http_downstream_rq_total{job=~\"envoy.*|gateway.*\"}[1m])",
+          "legendFormat": "Total Requests ({{ envoy_response_code_class }})"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          },
+          "unit": "reqps"
+        }
+      }
     },
     {
-      "title": "Go Greeter Memory Usage",
+      "title": "Go Memory Details",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
-          "expr": "go_memstats_alloc_bytes{job=\"greeter-service\"}",
-          "legendFormat": "Allocated"
+          "expr": "process_resident_memory_bytes{job=\"$service\"}",
+          "legendFormat": "Physical RAM (RSS)"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+          "expr": "go_memstats_alloc_bytes{job=\"$service\"}",
+          "legendFormat": "App Heap (Code)"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": { "fillOpacity": 10 }
+        }
+      }
     },
     {
-      "title": "Go Goroutines",
+      "title": "Active Goroutines",
       "type": "stat",
       "gridPos": { "h": 4, "w": 6, "x": 0, "y": 8 },
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
-          "expr": "go_goroutines{job=\"greeter-service\"}"
+          "expr": "go_goroutines{job=\"$service\"}",
+          "legendFormat": "Goroutines"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1000 }
+            ]
+          }
+        }
+      }
     },
     {
-      "title": "Loki Logs (Errors)",
+      "title": "Recent Traces (Tempo)",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 18, "x": 6, "y": 8 },
+      "datasource": { "type": "tempo", "uid": "Tempo" },
+      "targets": [
+        {
+            "refId": "A",
+            "queryType": "nativeSearch",
+            "limit": 10
+        }
+      ],
+      "description": "List of recent request traces. Click traceID to view details."
+    },
+    {
+      "title": "Live Logs (All Levels)",
       "type": "logs",
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 12 },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 16 },
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "Loki" },
-          "expr": "{service=\"greeter-service\"} |= \"error\""
+          "expr": "{job=~\"$service|envoy-gateway\"}"
         }
       ]
     }
@@ -55,9 +102,24 @@
   "refresh": "5s",
   "schemaVersion": 38,
   "tags": ["observability"],
-  "templating": { "list": [] },
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+        "query": "label_values(go_goroutines, job)",
+        "refresh": 1,
+        "sort": 1,
+        "multi": false,
+        "includeAll": false,
+        "label": "Service",
+        "hide": 0
+      }
+    ]
+  },
   "time": { "from": "now-15m", "to": "now" },
-  "title": "Microservices Overview",
+  "title": "Microservices Overview (Fixed v2)",
   "uid": "microservices-overview",
-  "version": 1
+  "version": 4
 }

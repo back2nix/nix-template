@@ -1,0 +1,79 @@
+receivers:
+  # Прием данных от Go-сервисов (Traces & Metrics push)
+  otlp:
+    protocols:
+      grpc:
+        endpoint: "0.0.0.0:4317"
+      http:
+        endpoint: "0.0.0.0:4318"
+
+  # Прием данных от Envoy (Zipkin Tracing legacy support)
+  zipkin:
+    endpoint: "0.0.0.0:9411"
+
+  # Скрапинг метрик (вместо того чтобы VM скрапила сама)
+  # Это позволяет обогатить метрики метаданными OTel перед отправкой в VM
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: 'envoy-gateway'
+          scrape_interval: 5s
+          static_configs:
+            - targets: ['host.docker.internal:9901']
+              labels:
+                service_name: 'gateway-proxy'
+
+        - job_name: 'greeter-service'
+          scrape_interval: 5s
+          static_configs:
+            - targets: ['host.docker.internal:8081']
+              labels:
+                service_name: 'greeter-service'
+
+        - job_name: 'shell-service'
+          scrape_interval: 5s
+          static_configs:
+            - targets: ['host.docker.internal:9002']
+              labels:
+                service_name: 'shell-service'
+
+processors:
+  # Добавляет batching для оптимизации сети
+  batch:
+    timeout: 1s
+    send_batch_size: 1024
+
+  # Пытается определить окружение (хост, OS и т.д.)
+  resourcedetection:
+    detectors: [env, system]
+    timeout: 2s
+    override: false
+
+exporters:
+  # Отправка трейсов в Tempo
+  otlp/tempo:
+    endpoint: "tempo:4317"
+    tls:
+      insecure: true
+
+  # Отправка метрик в VictoriaMetrics (Prometheus Remote Write)
+  prometheusremotewrite/vm:
+    endpoint: "http://victoriametrics:8428/api/v1/write"
+    # Включаем отправку Exemplars (связь метрик и трейсов)
+    resource_to_telemetry_conversion:
+      enabled: true
+
+  debug:
+    verbosity: detailed
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp, zipkin]
+      processors: [batch, resourcedetection]
+      exporters: [otlp/tempo]
+
+    metrics:
+      receivers: [otlp, prometheus]
+      processors: [batch, resourcedetection]
+      exporters: [prometheusremotewrite/vm]

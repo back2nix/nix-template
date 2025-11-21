@@ -19,18 +19,17 @@ static_resources:
           "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
           stat_prefix: ingress_http
 
-          # --- TRACING (Zipkin -> Tempo) ---
-          # Отключаем tracing для тестов, так как Tempo не поднят в k3s
+          # --- TRACING (Enabled -> OTel Collector) ---
           generate_request_id: true
-          # tracing:
-          #   provider:
-          #     name: envoy.tracers.zipkin
-          #     typed_config:
-          #       "@type": type.googleapis.com/envoy.config.trace.v3.ZipkinConfig
-          #       collector_cluster: tempo_zipkin
-          #       collector_endpoint: "/api/v2/spans"
-          #       shared_span_context: false
-          #       collector_endpoint_version: HTTP_JSON
+          tracing:
+            provider:
+              name: envoy.tracers.zipkin
+              typed_config:
+                "@type": type.googleapis.com/envoy.config.trace.v3.ZipkinConfig
+                collector_cluster: otel_collector
+                collector_endpoint: "/api/v2/spans"
+                shared_span_context: false
+                collector_endpoint_version: HTTP_JSON
 
           # --- ACCESS LOGS (JSON format for Loki) ---
           access_log:
@@ -49,6 +48,7 @@ static_resources:
                   response_code: "%RESPONSE_CODE%"
                   duration: "%DURATION%"
                   x_request_id: "%REQ(X-REQUEST-ID)%"
+                  traceID: "%REQ(x-b3-traceid)%"
                   upstream_cluster: "%UPSTREAM_CLUSTER%"
                   upstream_host: "%UPSTREAM_HOST%"
                   user_agent: "%REQ(USER-AGENT)%"
@@ -68,7 +68,7 @@ static_resources:
                     google_re2: {}
                     regex: ".*"
                 allow_methods: "GET, POST, PUT, DELETE, OPTIONS"
-                allow_headers: "Content-Type, Authorization, x-request-id, x-b3-traceid, x-b3-spanid, x-b3-parentspanid, x-b3-sampled, x-b3-flags"
+                allow_headers: "Content-Type, Authorization, x-request-id, x-b3-traceid, x-b3-spanid, x-b3-parentspanid, x-b3-sampled, x-b3-flags, traceparent, tracestate"
               routes:
               # --- Route: Greeter Service ---
               - match:
@@ -141,13 +141,13 @@ static_resources:
                 address: 127.0.0.1
                 port_value: 9002
 
-  # --- CLUSTER: Tempo (Zipkin API) - закомментирован для тестов ---
-  - name: tempo_zipkin
+  # --- CLUSTER: OTel Collector (via Zipkin Protocol) ---
+  - name: otel_collector
     connect_timeout: 1s
     type: STRICT_DNS
     lb_policy: ROUND_ROBIN
     load_assignment:
-      cluster_name: tempo_zipkin
+      cluster_name: otel_collector
       endpoints:
       - lb_endpoints:
         - endpoint:
