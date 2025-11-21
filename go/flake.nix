@@ -36,7 +36,7 @@
           srcBackend = ./shell/backend;
           srcFrontend = ./shell/frontend;
           port = "3000";
-          yarnHash = "sha256-1/c8dhDK/63cUSJlB0GAn9aCSeejZrMb/3yq5EZRak0=";
+          yarnHash = "sha256-8XhCpOIxO3lNKVjmxSIL19cvq8z+G0egOWvY/2yXYBI=";
         };
 
         greeterPkg = buildService {
