@@ -2,7 +2,7 @@
 name = "my-python-project"
 version = "0.1.0"
 description = "A generic Python project template"
-requires-python = ">=3.11"
+requires-python = ">=3.9"
 dependencies = [
     "python-dotenv",
     "numpy",
