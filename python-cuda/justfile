@@ -1,0 +1,21 @@
+# Показать список доступных команд
+default:
+    @just --list
+
+# Установить зависимости (создает .venv)
+setup:
+    uv sync
+
+# Запустить скрипт (автоматически использует .venv)
+run:
+    uv run python main.py
+
+# Проверка GPU (если установлен torch)
+check-gpu:
+    uv run python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
+
+# Очистка
+clean:
+    rm -rf .venv
+    find . -type f -name "*.pyc" -delete
+    find . -type d -name "__pycache__" -delete
