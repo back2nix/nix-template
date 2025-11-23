@@ -5,8 +5,13 @@
 - DDD
 - Clear Architecture
 - Observability
+- Во всем нужно думать о долгосрочной перспективе, в том числе во время рефакторина кода
 
+
+Если тебе  нужны какие то файлы чтобы правильно ответить на мой вопрос,
 напиши мне файлы в качестве аргументов к этой утилите, которые тебе нужно увидеть чтобы выполнить эту задачу.
 ```
-mfiles -k -i *.nix justfile lib/*.nix tests/*.nix service/*/*file.go ...
+mfiles -k -i *.nix justfile lib/*.nix tests/*.nix service/*/*file.go deployments/dashboards/go-envoy-overview.json ...
 ```
+
+Исправленные файлы нужно выдавать не сокращая код внутри. Файлы которые не испралвяешь не выдавай.
