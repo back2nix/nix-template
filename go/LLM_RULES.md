@@ -2,6 +2,7 @@
 - Микросервис
 - API Gateway
 - Frontend Federation
+- Tracing
 - DDD
 - Clear Architecture
 - Observability
