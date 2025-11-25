@@ -80,12 +80,24 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "greeter-service"
+              "options": "chat-service"
             },
             "properties": [
               {
                 "id": "displayName",
-                "value": "Greeter"
+                "value": "Chat Backend"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "landing-service"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Landing Backend"
               }
             ]
           },
@@ -97,7 +109,19 @@
             "properties": [
               {
                 "id": "displayName",
-                "value": "Shell"
+                "value": "Shell Frontend"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "notification-service"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Notification Service"
               }
             ]
           },
@@ -110,6 +134,18 @@
               {
                 "id": "displayName",
                 "value": "Gateway"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "redpanda"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Kafka (Redpanda)"
               }
             ]
           }
@@ -145,7 +181,7 @@
             "uid": "VictoriaMetrics"
           },
           "editorMode": "code",
-          "expr": "max by (job) (up{job=~\"greeter-service|shell-service|envoy-gateway\"})",
+          "expr": "max by (job) (up{job=~\"chat-service|landing-service|shell-service|notification-service|envoy-gateway|redpanda\"})",
           "legendFormat": "{{job}}",
           "range": true,
           "refId": "A"
@@ -232,7 +268,7 @@
             "uid": "VictoriaMetrics"
           },
           "editorMode": "code",
-          "expr": "max by (alertname, job) (ALERTS{alertstate=\"firing\"})",
+          "expr": "max by (alertname, job) (last_over_time(ALERTS{alertstate=\"firing\"}[15s]))",
           "legendFormat": "{{alertname}} — {{job}}",
           "range": true,
           "refId": "A"
@@ -258,6 +294,6 @@
   },
   "title": "Main Status",
   "uid": "alerts-overview",
-  "version": 3,
+  "version": 7,
   "weekStart": ""
 }

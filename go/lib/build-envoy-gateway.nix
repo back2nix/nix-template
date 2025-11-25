@@ -9,25 +9,49 @@ let
     # 1. Настройка порта Gateway
     export GATEWAY_HTTP_PORT=''${GATEWAY_HTTP_PORT:-${port}}
 
-    # 2. Настройка Greeter Service
-    # Если GREETER_HOST не задан явно, пытаемся взять из K8s Env Var (GREETER_SERVICE_HOST)
-    if [ -z "$GREETER_HOST" ]; then
-      if [ -n "$GREETER_SERVICE_HOST" ]; then
-        echo "Using K8s Service Discovery for Greeter..."
-        export GREETER_HOST="$GREETER_SERVICE_HOST"
-        # Пытаемся найти HTTP порт. Если сервисный порт один, он в GREETER_SERVICE_PORT.
-        # Если их несколько (как у нас: 50051 и 8081), K8s создаст vars по именам портов, но это сложно.
-        # Для надежности в тесте мы используем дефолт 8081, так как ClusterIP порт совпадает с ContainerPort.
-        export GREETER_PORT="8081"
+    # 2. Настройка Landing Service
+    if [ -z "$LANDING_HOST" ]; then
+      if [ -n "$LANDING_SERVICE_HOST" ]; then
+        echo "Using K8s Service Discovery for Landing..."
+        export LANDING_HOST="$LANDING_SERVICE_HOST"
+        export LANDING_PORT="8081"
       else
-        export GREETER_HOST="127.0.0.1"
-        export GREETER_PORT="8081"
+        export LANDING_HOST="127.0.0.1"
+        export LANDING_PORT="8081"
       fi
     else
-      export GREETER_PORT=''${GREETER_PORT:-8081}
+      export LANDING_PORT=''${LANDING_PORT:-8081}
     fi
 
-    # 3. Настройка Shell Service
+    # 3. Настройка Chat Service
+    if [ -z "$CHAT_HOST" ]; then
+      if [ -n "$CHAT_SERVICE_HOST" ]; then
+        echo "Using K8s Service Discovery for Chat..."
+        export CHAT_HOST="$CHAT_SERVICE_HOST"
+        export CHAT_PORT="8082"
+      else
+        export CHAT_HOST="127.0.0.1"
+        export CHAT_PORT="8082"
+      fi
+    else
+      export CHAT_PORT=''${CHAT_PORT:-8082}
+    fi
+
+    # 4. Настройка Notification Service
+    if [ -z "$NOTIFICATION_HOST" ]; then
+      if [ -n "$NOTIFICATION_SERVICE_HOST" ]; then
+        echo "Using K8s Service Discovery for Notification..."
+        export NOTIFICATION_HOST="$NOTIFICATION_SERVICE_HOST"
+        export NOTIFICATION_PORT="8085"
+      else
+        export NOTIFICATION_HOST="127.0.0.1"
+        export NOTIFICATION_PORT="8085"
+      fi
+    else
+      export NOTIFICATION_PORT=''${NOTIFICATION_PORT:-8085}
+    fi
+
+    # 5. Настройка Shell Service
     if [ -z "$SHELL_HOST" ]; then
       if [ -n "$SHELL_SERVICE_HOST" ]; then
         echo "Using K8s Service Discovery for Shell..."
@@ -41,16 +65,17 @@ let
       export SHELL_PORT=''${SHELL_PORT:-9002}
     fi
 
-    # 4. Настройка OTel Collector
-    # Важно: если DNS нет, имя "otel-collector" сломает Envoy. Используем IP по умолчанию.
+    # 6. Настройка OTel Collector
     export OTEL_COLLECTOR_HOST=''${OTEL_COLLECTOR_HOST:-127.0.0.1}
     export OTEL_COLLECTOR_PORT=''${OTEL_COLLECTOR_PORT:-4317}
 
     echo "🚀 Starting Envoy Gateway..."
     echo "   Port: $GATEWAY_HTTP_PORT"
-    echo "   Upstream Greeter: $GREETER_HOST:$GREETER_PORT"
-    echo "   Upstream Shell:   $SHELL_HOST:$SHELL_PORT"
-    echo "   OTel Collector:   $OTEL_COLLECTOR_HOST:$OTEL_COLLECTOR_PORT"
+    echo "   Upstream Landing:      $LANDING_HOST:$LANDING_PORT"
+    echo "   Upstream Chat:         $CHAT_HOST:$CHAT_PORT"
+    echo "   Upstream Notification: $NOTIFICATION_HOST:$NOTIFICATION_PORT"
+    echo "   Upstream Shell:        $SHELL_HOST:$SHELL_PORT"
+    echo "   OTel Collector:        $OTEL_COLLECTOR_HOST:$OTEL_COLLECTOR_PORT"
 
     mkdir -p /tmp
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -13,99 +14,117 @@ import (
 type Loader struct {
 	v   *viper.Viper
 	env string
+	prefix string
 }
 
-// NewLoader создает новый загрузчик конфигурации
-func NewLoader() *Loader {
+// NewLoader создает новый загрузчик.
+func NewLoader(serviceName string) *Loader {
 	v := viper.New()
 
-	// Настраиваем чтение из environment variables
 	v.AutomaticEnv()
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 
-	env := v.GetString("APP_ENV")
+	if serviceName != "" {
+		v.SetEnvPrefix(serviceName)
+	}
+
+	env := os.Getenv("APP_ENV")
 	if env == "" {
 		env = "dev"
 	}
 
 	return &Loader{
-		v:   v,
-		env: env,
+		v:      v,
+		env:    env,
+		prefix: serviceName,
 	}
 }
 
-// findProjectRoot ищет корень проекта (где находится flake.nix)
-func findProjectRoot() (string, error) {
-	dir, err := os.Getwd()
-	if err != nil {
-		return "", err
-	}
-
-	// Идём вверх по директориям пока не найдём flake.nix
-	for {
-		flakePath := filepath.Join(dir, "flake.nix")
-		if _, err := os.Stat(flakePath); err == nil {
-			return dir, nil
-		}
-
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			// Дошли до корня файловой системы
-			return "", fmt.Errorf("project root not found (no flake.nix)")
-		}
-		dir = parent
-	}
-}
-
-// Load загружает конфигурацию с приоритетами:
-// 1. Дефолтные значения (установленные через SetDefault)
-// 2. Файл configs/{APP_ENV}.env
-// 3. OS environment variables (переопределяют всё)
+// Load загружает конфигурацию из файла (если есть)
 func (l *Loader) Load() error {
-	// Находим корень проекта
-	projectRoot, err := findProjectRoot()
-	if err != nil {
-		fmt.Printf("⚠️  Could not find project root: %v, using only environment variables\n", err)
-		return nil
-	}
-
-	configPath := filepath.Join(projectRoot, "configs")
+	configPath := findConfigPath()
 	configName := l.env
 
-	// Настраиваем Viper для чтения конфиг файла
 	l.v.SetConfigName(configName)
 	l.v.SetConfigType("env")
 	l.v.AddConfigPath(configPath)
 
-	// Пытаемся прочитать конфиг файл
+	// Пытаемся прочитать файл, но не умираем, если его нет (полагаемся на ENV)
 	if err := l.v.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
-			fmt.Printf("⚠️  Config file %s.env not found in %s, using only environment variables\n", configName, configPath)
-			return nil
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			return fmt.Errorf("failed to read config file: %w", err)
 		}
-		return fmt.Errorf("failed to read config file: %w", err)
+		// Если файла нет, это нормально, идем дальше
+	} else {
+		fmt.Printf("✅ Loaded config from %s\n", l.v.ConfigFileUsed())
 	}
 
-	fmt.Printf("✅ Loaded config from %s\n", l.v.ConfigFileUsed())
 	return nil
 }
 
-// GetViper возвращает экземпляр Viper для прямого доступа
-func (l *Loader) GetViper() *viper.Viper {
-	return l.v
-}
-
-// SetDefault устанавливает дефолтное значение
-func (l *Loader) SetDefault(key string, value interface{}) {
-	l.v.SetDefault(key, value)
-}
-
-// Unmarshal десериализует конфигурацию в структуру
+// Unmarshal десериализует конфигурацию и биндит ENV переменные
 func (l *Loader) Unmarshal(cfg interface{}) error {
+	// ВАЖНО: Явно биндим ENV переменные для всех полей структуры
+	if err := l.bindEnvs(cfg); err != nil {
+		return err
+	}
 	return l.v.Unmarshal(cfg)
 }
 
-// UnmarshalKey десериализует конкретный ключ в структуру
-func (l *Loader) UnmarshalKey(key string, cfg interface{}) error {
-	return l.v.UnmarshalKey(key, cfg)
+// bindEnvs рекурсивно проходит по полям структуры и делает v.BindEnv
+func (l *Loader) bindEnvs(iface interface{}, parts ...string) error {
+	ifv := reflect.ValueOf(iface)
+	if ifv.Kind() == reflect.Ptr {
+		ifv = ifv.Elem()
+	}
+
+	ift := ifv.Type()
+	for i := 0; i < ift.NumField(); i++ {
+		field := ift.Field(i)
+		tv, ok := field.Tag.Lookup("mapstructure")
+		if !ok {
+			continue
+		}
+
+		// Обрабатываем вложенные структуры (например, ServerConfig)
+		if field.Type.Kind() == reflect.Struct {
+			if err := l.bindEnvs(ifv.Field(i).Interface(), append(parts, tv)...); err != nil {
+				return err
+			}
+			continue
+		}
+
+		// Формируем ключ: server.http_port
+		key := strings.Join(append(parts, tv), ".")
+		if err := l.v.BindEnv(key); err != nil {
+			return err
+		}
+
+		// Debug log (optional, enabled for troubleshooting)
+		// envKey := strings.ToUpper(l.prefix + "_" + strings.ReplaceAll(key, ".", "_"))
+		// fmt.Printf("🔧 Binding Config Key '%s' -> Env '%s'\n", key, envKey)
+	}
+	return nil
+}
+
+func findConfigPath() string {
+	if path := os.Getenv("CONFIG_PATH"); path != "" {
+		return path
+	}
+	dir, err := os.Getwd()
+	if err != nil {
+		return "."
+	}
+	for {
+		configPath := filepath.Join(dir, "configs")
+		if _, err := os.Stat(configPath); err == nil {
+			return configPath
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return "."
 }

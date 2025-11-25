@@ -1,248 +1,548 @@
+# Автоматически загружаем переменные из .env
+set dotenv-load
+# ВАЖНО: Экспортируем все переменные в дочерние процессы (envsubst, go run и т.д.)
+# Это позволяет избежать длинных export VAR=... в рецептах
+set export := true
+
 default:
     @just --list
 
-# --- INSTALL & DEPS ---
+# Список сервисов
+SERVICES := "shell landing chat notification"
+ALL_IMAGES := "gateway shell landing chat notification"
+
+# ===========================================
+# INSTALL & DEPS
+# ===========================================
 
 link-pkg:
     @echo "🔗 Linking shared 'pkg' to backends..."
-    # Shell Backend (Depth: 2 -> ../../pkg)
-    cd shell/backend && rm -rf pkg && ln -sf ../../pkg pkg
-    # Greeter Backend (Depth: 3 -> ../../../pkg)
-    cd services/greeter/backend && rm -rf pkg && ln -sf ../../../pkg pkg
+    @for service in {{SERVICES}}; do \
+        mkdir -p services/$service/backend/pkg; \
+        cd services/$service/backend && rm -rf pkg && ln -sf ../../../pkg pkg && cd - > /dev/null; \
+    done
 
-deps: deps-shell deps-greeter
+deps: link-pkg
+    @echo "📦 Installing dependencies for all services..."
+    @for service in {{SERVICES}}; do \
+        echo "🔹 Service: $service"; \
+        if [ -d "services/$service/frontend" ]; then \
+            echo "   [Frontend] Yarn install..."; \
+            cd services/$service/frontend && yarn install --silent && cd - > /dev/null; \
+        fi; \
+        echo "   [Backend] Go tidy & gomod2nix..."; \
+        cd services/$service/backend && go mod tidy; \
+            gomod2nix; \
+        cd - > /dev/null; \
+        cd services/$service/backend && go mod tidy && cd - > /dev/null; \
+    done
 
-deps-shell:
-    cd shell/frontend && yarn install
-    cd shell/backend && go mod tidy && gomod2nix
+# ===========================================
+# CODE QUALITY
+# ===========================================
 
-deps-greeter:
-    cd services/greeter/frontend && yarn install
-    cd services/greeter/backend && go mod tidy && gomod2nix
+fmt service="all":
+    @if [ "{{service}}" = "all" ]; then \
+        for s in {{SERVICES}}; do just fmt $s; done; \
+    else \
+        echo "🎨 Formatting {{service}}..."; \
+        cd services/{{service}}/backend && go fmt ./...; \
+    fi
 
-# --- CODE GENERATION ---
+lint service="all":
+    @if [ "{{service}}" = "all" ]; then \
+        for s in {{SERVICES}}; do just lint $s; done; \
+    else \
+        echo "🔍 Linting {{service}}..."; \
+        cd services/{{service}}/backend && golangci-lint run ./... -v --config ../../../.golangci.yml; \
+    fi
 
-gen-proto:
-    cd services/greeter/backend && protoc --go_out=. --go_opt=paths=source_relative \
-           --go-grpc_out=. --go-grpc_opt=paths=source_relative \
-           proto/helloworld/helloworld.proto
+lint-fix service="all":
+    @if [ "{{service}}" = "all" ]; then \
+        for s in {{SERVICES}}; do just lint-fix $s; done; \
+    else \
+        echo "🔧 Fixing Lint errors in {{service}}..."; \
+        cd services/{{service}}/backend && golangci-lint run --fix ./... --config ../../../.golangci.yml; \
+    fi
 
-# --- RUNNING (Development) ---
+vuln service="all":
+    @if [ "{{service}}" = "all" ]; then \
+        for s in {{SERVICES}}; do just vuln $s; done; \
+    else \
+        echo "🛡️  Checking vulnerabilities in {{service}}..."; \
+        cd services/$service/backend && govulncheck ./...; \
+    fi
+
+fieldalignment service="all":
+    @if [ "{{service}}" = "all" ]; then \
+        for s in {{SERVICES}}; do just fieldalignment $s; done; \
+    else \
+        echo "📐 Aligning fields in {{service}}..."; \
+        cd services/{{service}}/backend && \
+        go run golang.org/x/tools/go/analysis/passes/fieldalignment/cmd/fieldalignment@latest -test=false -fix ./...; \
+    fi
+
+check-all: fmt lint vuln
+
+# ===========================================
+# CODE GENERATION
+# ===========================================
+
+gen-proto: gen-proto-notification
+
+gen-proto-notification:
+    @echo "🔨 Generating Notification Proto..."
+    protoc --go_out=. --go_opt=paths=source_relative \
+        --go-grpc_out=. --go-grpc_opt=paths=source_relative \
+        pkg/proto/notification/notification.proto
+
+# ===========================================
+# RUNNING (Development)
+# ===========================================
 
 dev-all:
-    @echo "🚀 Starting all services..."
-    @just kill-ports
-    @just dev-gateway &
-    @just dev-shell &
-    @just dev-greeter &
-    @wait
+    #!/usr/bin/env bash
+    set -e
+    echo "🚀 Starting all services..."
+    just kill-ports
+
+    echo "Starting Gateway..."
+    just dev-gateway &
+    sleep 2
+
+    echo "Starting Services..."
+    just dev-shell &
+    just dev-landing &
+    just dev-chat &
+    just dev-notification &
+
+    echo ""
+    echo "⏳ Waiting 5 seconds for startup..."
+    sleep 5
+    just check-status
 
 dev-gateway:
-    @echo "🌐 Starting Envoy Gateway on :8080..."
-    # Добавлены переменные для Shell и OTel, заменены localhost на 127.0.0.1 для надежности
-    @export GATEWAY_HTTP_PORT=8080 \
-            GREETER_HOST=127.0.0.1 GREETER_PORT=8081 \
-            SHELL_HOST=127.0.0.1 SHELL_PORT=9002 \
-            OTEL_COLLECTOR_HOST=127.0.0.1 OTEL_COLLECTOR_PORT=4317 && \
-    envsubst < services/gateway/envoy.tmpl.yaml > /tmp/envoy.yaml && \
-    envoy -c /tmp/envoy.yaml --service-cluster gateway --service-node dev 2>&1 | tee -a /tmp/gateway.log
+    @echo "🌐 Starting Envoy Gateway on :${GATEWAY_HTTP_PORT}..."
+    @envsubst < services/gateway/envoy.tmpl.yaml > /tmp/envoy.yaml && \
+    envoy -c /tmp/envoy.yaml --service-cluster gateway --service-node dev > /tmp/gateway.log 2>&1
 
 dev-shell:
-    @echo "🖥  Starting Shell (Host) on :9002..."
-    cd shell/frontend && yarn build
-    @echo "Shell frontend built, starting backend..."
-    cd shell/backend && SHELL_HTTP_PORT=9002 SHELL_STATIC_DIR=../frontend/dist APP_ENV=dev go run cmd/server/main.go 2>&1 | tee -a /tmp/shell.log
+    @echo "🖥  Starting Shell (Host)..."
+    cd services/shell/frontend && \
+    VITE_OTEL_ENDPOINT="${VITE_OTEL_ENDPOINT}" \
+    VITE_GATEWAY_URL="${VITE_GATEWAY_URL}" \
+    VITE_LANDING_REMOTE_URL="${VITE_GATEWAY_URL}/api/landing/remoteEntry.js" \
+    VITE_CHAT_REMOTE_URL="${VITE_GATEWAY_URL}/api/chat/remoteEntry.js" \
+    yarn build
+    cd services/shell/backend && go run cmd/server/main.go > /tmp/shell.log 2>&1
 
-dev-greeter:
-    @echo "👋 Starting Greeter Service..."
-    cd services/greeter/frontend && yarn build
-    @echo "Greeter frontend built, starting backend..."
-    cd services/greeter/backend && APP_ENV=dev go run cmd/server/main.go 2>&1 | tee -a /tmp/greeter.log
+dev-landing:
+    @echo "🛬 Starting Landing Service..."
+    cd services/landing/frontend && \
+    VITE_BASE_PATH=/api/landing/ \
+    VITE_GATEWAY_URL="${VITE_GATEWAY_URL}" \
+    VITE_OTEL_ENDPOINT="${VITE_OTEL_ENDPOINT}" \
+    yarn build
+    cd services/landing/backend && go run cmd/server/main.go > /tmp/landing.log 2>&1
 
-# --- BUILD (Nix) ---
+dev-chat:
+    @echo "💬 Starting Chat Service..."
+    cd services/chat/frontend && \
+    VITE_BASE_PATH=/api/chat/ \
+    VITE_GATEWAY_URL="${VITE_GATEWAY_URL}" \
+    VITE_OTEL_ENDPOINT="${VITE_OTEL_ENDPOINT}" \
+    yarn build
+    cd services/chat/backend && go run cmd/server/main.go > /tmp/chat.log 2>&1
 
-build:
-    nix build .#all
+dev-notification:
+    @echo "🔔 Starting Notification Service..."
+    cd services/notification/backend && go run cmd/server/main.go > /tmp/notification.log 2>&1
 
-build-gateway:
-    nix build .#gateway
+# ===========================================
+# KUBERNETES / K3S OPERATIONS
+# ===========================================
 
-build-shell:
-    nix build .#shell
+# Строит и загружает ТОЛЬКО базовый образ (нужно один раз)
+k3s-load-base:
+    @echo "🏗  Building Base Image..."
+    nix build .#dockerImages.devBase -o result-dev-base
+    @echo "🚚 Loading Base Image to K3s..."
+    sudo k3s ctr images rm docker.io/library/dev-base:latest > /dev/null 2>&1 || true
+    sudo k3s ctr images import ./result-dev-base
+    @rm result-dev-base
+    @echo "✅ Base image ready."
 
-build-greeter:
-    nix build .#greeter
+# 🚀 MAGICAL HACK: Быстрый деплой без сборки Docker
+k3s-fast-deploy: k3s-fix-config k3s-check
+    #!/usr/bin/env bash
+    set -e
+    echo "⚡ STARTING FAST DEPLOYMENT (Nix Store Mount Mode)"
 
-# --- TESTING ---
+    # 0. Проверка наличия базового образа
+    if ! sudo k3s ctr images ls | grep -q "dev-base"; then
+        echo "⚠️ Base image not found. Building and loading first..."
+        just k3s-load-base
+    fi
 
-test:
-    @echo "🧪 Running tests..."
-    cd services/greeter/backend && go test ./... || true
-    nix flake check -L
+    # 1. Сборка бинарников и получение ПРЯМЫХ путей к Store
+    echo "🏗  Building service binaries in parallel..."
 
-# --- UTILITIES ---
+    BUILD_OUTPUT=$(nix build \
+        .#k8s.gateway \
+        .#k8s.shell \
+        .#k8s.landing \
+        .#k8s.chat \
+        .#k8s.notification \
+        --print-out-paths \
+        --no-link)
+
+    export GATEWAY_BIN=$(echo "$BUILD_OUTPUT" | grep gateway)
+    export SHELL_BIN=$(echo "$BUILD_OUTPUT" | grep shell)
+    export LANDING_BIN=$(echo "$BUILD_OUTPUT" | grep landing)
+    export CHAT_BIN=$(echo "$BUILD_OUTPUT" | grep chat)
+    export NOTIFICATION_BIN=$(echo "$BUILD_OUTPUT" | grep notification)
+
+    echo "📍 Direct Store Paths:"
+    echo "   Gateway: $GATEWAY_BIN"
+    echo "   Shell:   $SHELL_BIN"
+    echo "   Landing: $LANDING_BIN"
+    echo "   Chat:    $CHAT_BIN"
+    echo "   Notif:   $NOTIFICATION_BIN"
+
+    # 2. Применение шаблона с заменой переменных
+    echo "📄 Applying K8s manifests..."
+    export KUBECONFIG=~/.kube/config
+
+    # Применяем базовые конфиги (Observability, Logs)
+    kubectl apply -f deployments/k8s/observability.yaml --validate=false
+    kubectl apply -f deployments/k8s/fluent-bit.yaml --validate=false
+
+    # --- FIX: Применяем дашборды ---
+    kubectl apply -f deployments/k8s/dashboards.yaml --validate=false
+
+    # --- NEW: Применяем Storage (ScyllaDB) ---
+    kubectl apply -f deployments/k8s/storage.yaml --validate=false
+
+    # --- NEW: Применяем Queue (Redpanda) ---
+    kubectl apply -f deployments/k8s/queue.yaml --validate=false
+
+    # --- FIX: Явно создаем namespace 'app' перед загрузкой конфигов ---
+    kubectl create namespace app --dry-run=client -o yaml | kubectl apply -f -
+
+    # Теперь можно применять конфиги приложения
+    kubectl apply -f deployments/k8s/runtime-config.yaml --validate=false
+
+    # Генерируем и применяем манифест приложений (Service, Deployment)
+    envsubst < deployments/k8s/apps-dev.tmpl.yaml | kubectl apply -f -
+
+    # 3. Перезапуск подов
+    echo "🔄 Restarting deployments to pick up new paths..."
+    kubectl rollout restart deployment gateway shell landing chat notification -n app
+
+    echo "✅ Fast deploy complete! Pods are restarting..."
+    kubectl get pods -n app
+
+build-images:
+    #!/usr/bin/env bash
+    set -e
+    SERVICES="{{ALL_IMAGES}}"
+
+    # Переменные для итогов
+    TOTAL_APP_TIME=0
+    TOTAL_DOCKER_TIME=0
+    TOTAL_ARCHIVE_SIZE=0
+
+    echo ""
+    echo "🏗  DETAILED BUILD REPORT"
+    echo "======================================================================================================="
+    printf "%-15s | %-12s | %-12s | %-12s | %-12s | %-12s\n" "SERVICE" "APP TIME" "APP SIZE" "DOCKER TIME" "FILE SIZE" "TOTAL TIME"
+    echo "-------------------------------------------------------------------------------------------------------"
+
+    for service in $SERVICES; do
+        # 1. СБОРКА ПРИЛОЖЕНИЯ (Binary)
+        # Предполагается, что в flake.nix у вас есть package с именем сервиса
+        rm -f result-bin-$service
+
+        START_APP=$(date +%s)
+        # Строим только бинарник/пакет
+        nix build .#$service -o result-bin-$service > /dev/null 2>&1
+        END_APP=$(date +%s)
+
+        APP_DURATION=$((END_APP - START_APP))
+        # du -L следует по ссылке в /nix/store
+        APP_SIZE_HUMAN=$(du -Lsh result-bin-$service | awk '{print $1}')
+
+        # 2. СБОРКА ДОКЕР-АРХИВА
+        rm -f result-$service
+
+        START_DOCKER=$(date +%s)
+        # Строим образ
+        nix build .#dockerImages.$service -o result-$service > /dev/null 2>&1
+        END_DOCKER=$(date +%s)
+
+        DOCKER_DURATION=$((END_DOCKER - START_DOCKER))
+        # Размер архива tar.gz
+        DOCKER_SIZE_HUMAN=$(du -Lsh result-$service | awk '{print $1}')
+        # Размер в байтах для подсчета суммы
+        DOCKER_SIZE_BYTES=$(du -Lb result-$service | awk '{print $1}')
+
+        TOTAL_DURATION=$((TOTAL_DURATION + APP_DURATION + DOCKER_DURATION))
+
+        printf "%-15s | %-12s | %-12s | %-12s | %-12s | %-12s\n" \
+            "$service" "${APP_DURATION}s" "$APP_SIZE_HUMAN" "${DOCKER_DURATION}s" "$DOCKER_SIZE_HUMAN" "${TOTAL_DURATION}s"
+
+        # Суммируем
+        TOTAL_APP_TIME=$((TOTAL_APP_TIME + APP_DURATION))
+        TOTAL_DOCKER_TIME=$((TOTAL_DOCKER_TIME + DOCKER_DURATION))
+        TOTAL_ARCHIVE_SIZE=$((TOTAL_ARCHIVE_SIZE + DOCKER_SIZE_BYTES))
+
+        # Чистим симлинк на бинарник
+        rm -f result-bin-$service
+    done
+
+    # Конвертация байт в читаемый вид
+    TOTAL_SIZE_HUMAN=$(numfmt --to=iec-i --suffix=B $TOTAL_ARCHIVE_SIZE 2>/dev/null || echo "$TOTAL_ARCHIVE_SIZE bytes")
+    TOTAL_ALL_TIME=$((TOTAL_APP_TIME + TOTAL_DOCKER_TIME))
+
+    echo "-------------------------------------------------------------------------------------------------------"
+    printf "%-15s | %-12s | %-12s | %-12s | %-12s | %-12s\n" \
+        "TOTAL" "${TOTAL_APP_TIME}s" "-" "${TOTAL_DOCKER_TIME}s" "$TOTAL_SIZE_HUMAN" "${TOTAL_ALL_TIME}s"
+    echo "======================================================================================================="
+    echo "✅ Images built (check result-* symlinks)"
+
+load-images: build-images
+    #!/usr/bin/env bash
+    set -e
+    SERVICES="{{ALL_IMAGES}}"
+
+    TOTAL_LOAD_TIME=0
+
+    echo ""
+    echo "🚚 LOAD REPORT (Import to K3s)"
+    echo "=========================================================================="
+    printf "%-15s | %-10s | %-15s\n" "SERVICE" "LOAD TIME" "IMAGE SIZE (K3s)"
+    echo "--------------------------------------------------------------------------"
+
+    # Очистка старых образов
+    for service in $SERVICES; do
+        sudo k3s ctr images rm docker.io/library/$service:latest > /dev/null 2>&1 || true
+    done
+
+    for service in $SERVICES; do
+        # Замер времени загрузки
+        START_TIME=$(date +%s)
+
+        sudo k3s ctr images import ./result-$service > /dev/null
+
+        END_TIME=$(date +%s)
+        DURATION=$((END_TIME - START_TIME))
+
+        # Получаем размер образа внутри K3s
+        IMG_SIZE=$(sudo k3s ctr images ls | grep "library/$service:latest" | awk '{print $(NF-1)}')
+
+        printf "%-15s | %-9s | %-15s\n" "$service" "${DURATION}s" "$IMG_SIZE"
+
+        TOTAL_LOAD_TIME=$((TOTAL_LOAD_TIME + DURATION))
+    done
+
+    echo "--------------------------------------------------------------------------"
+    printf "%-15s | %-9s | %-15s\n" "TOTAL" "${TOTAL_LOAD_TIME}s" "See above"
+    echo "=========================================================================="
+    echo "✅ All images loaded into K3s containerd"
+
+# Перезагрузка конкретного сервиса
+reload-service service:
+    @echo "🔄 Reloading {{service}} in K3s..."
+    @rm -f result-{{service}}
+    nix build .#dockerImages.{{service}} -o result-{{service}}
+    sudo k3s ctr images rm docker.io/library/{{service}}:latest 2>/dev/null || true
+    sudo k3s ctr images import ./result-{{service}}
+    kubectl delete pod -n app -l app={{service}}
+    @echo "⏳ Waiting for pod to start..."
+    @kubectl wait --for=condition=ready pod -l app={{service}} -n app --timeout=60s || true
+    @echo "✅ {{service}} reloaded"
+    @kubectl logs -n app -l app={{service}} --tail=10
+
+# --- FIX: Команда для лечения конфига и кэша ---
+k3s-fix-config:
+    @echo "🚑 Fixing Kubeconfig & Cleaning Cache..."
+    @rm -rf ~/.kube/cache ~/.kube/http-cache
+    @mkdir -p ~/.kube
+    @sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
+    @sudo chown $(id -u):$(id -g) ~/.kube/config
+    @chmod 600 ~/.kube/config
+    @echo "✅ Kubeconfig refreshed in ~/.kube/config"
+
+k3s-check:
+    @echo "🔍 Checking K8s connection..."
+    @export KUBECONFIG=~/.kube/config; kubectl get nodes > /dev/null || (echo "❌ Connection failed. Run 'just k3s-fix-config' first."; exit 1)
+    @echo "✅ K8s is reachable."
+
+k3s-deploy: k3s-fix-config k3s-check
+    @echo "🚀 Deploying to K3s..."
+    export KUBECONFIG=~/.kube/config; kubectl apply -f deployments/k8s/observability.yaml --validate=false
+    export KUBECONFIG=~/.kube/config; kubectl apply -f deployments/k8s/dashboards.yaml --validate=false
+    export KUBECONFIG=~/.kube/config; kubectl apply -f deployments/k8s/fluent-bit.yaml --validate=false
+    # Добавляем деплой очереди (Infra)
+    export KUBECONFIG=~/.kube/config; kubectl apply -f deployments/k8s/queue.yaml --validate=false
+    # Добавляем деплой базы данных (Storage)
+    export KUBECONFIG=~/.kube/config; kubectl apply -f deployments/k8s/storage.yaml --validate=false
+    # Деплой приложений
+    export KUBECONFIG=~/.kube/config; kubectl apply -f deployments/k8s/apps.yaml --validate=false
+    export KUBECONFIG=~/.kube/config; kubectl apply -f deployments/k8s/runtime-config.yaml --validate=false
+    @echo "⏳ Waiting for pods to initialize..."
+    @sleep 5
+    export KUBECONFIG=~/.kube/config; kubectl get pods -A
+
+k3s-up: load-images k3s-deploy
+    @echo "🔄 Restarting all application pods..."
+    kubectl delete pod -n app --all
+    @echo "⏳ Waiting for pods to restart..."
+    @sleep 10
+    @kubectl get pods -n app
+    @echo ""
+    @echo "🌟 System is up in K3s!"
+    # Используем переменную из .env для вывода IP/порта (предполагаем localhost для примера, но порт важен)
+    @echo "Gateway: http://localhost:${GATEWAY_HTTP_PORT}"
+
+k3s-observability:
+  kubectl delete namespace observability
+  kubectl apply -f deployments/k8s/observability.yaml
+  kubectl apply -f deployments/k8s/fluent-bit.yaml
+
+k3s-clean:
+    @echo "🧹 Removing K8s resources..."
+    export KUBECONFIG=~/.kube/config; kubectl delete namespace app queue storage observability --ignore-not-found
+    rm -f result-*
+
+k3s-logs SERVICE:
+    @echo "📋 Logs for {{SERVICE}}..."
+    @export KUBECONFIG=~/.kube/config; \
+    POD=$(kubectl get pods -n app -l app={{SERVICE}} -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
+    if [ -z "$POD" ]; then \
+        echo "❌ Pod for service '{{SERVICE}}' not found"; \
+        echo "Available services:"; \
+        kubectl get pods -n app --no-headers | awk '{print "  -", $1}' | sed 's/-[^-]*-[^-]*$//'; \
+        exit 1; \
+    fi; \
+    kubectl logs -n app $POD -f
+
+k3s-logs-all:
+    @echo "📋 Watching logs from all services..."
+    @export KUBECONFIG=~/.kube/config; \
+    kubectl logs -n app -l 'app' --all-containers=true -f --prefix=true
+
+k3s-redpanda:
+  kubectl port-forward -n observability svc/redpanda-console 8090:8080
+
+# ===========================================
+# BUILD (Nix)
+# ===========================================
+
+build target="all":
+    nix build .#{{target}}
+
+# ===========================================
+# UTILITIES
+# ===========================================
+
+check-status:
+    #!/usr/bin/env bash
+    echo ""
+    echo "📊 SERVICE STATUS REPORT"
+    echo "=============================================================="
+    printf "%-15s | %-8s | %-15s | %-10s\n" "SERVICE" "PORT" "STATUS" "PID"
+    echo "--------------------------------------------------------------"
+
+    check_port() {
+        local name=$1
+        local port=$2
+        local pid=$(lsof -ti:$port 2>/dev/null)
+        if [ -n "$pid" ]; then
+            printf "%-15s | %-8s | \033[32m✅ UP\033[0m            | %-10s\n" "$name" "$port" "$pid"
+        else
+            printf "%-15s | %-8s | \033[31m❌ DOWN\033[0m          | %-10s\n" "$name" "$port" "-"
+        fi
+    }
+
+    check_port "Gateway"      "${GATEWAY_HTTP_PORT}"
+    check_port "Shell"        "${SHELL_SERVER_HTTP_PORT}"
+    check_port "Landing"      "${LANDING_SERVER_HTTP_PORT}"
+    check_port "Chat"         "${CHAT_SERVER_HTTP_PORT}"
+    check_port "Notification" "${NOTIFICATION_SERVER_HTTP_PORT}"
+    echo "=============================================================="
+    echo "📝 Logs available in /tmp/*.log"
+    echo ""
 
 kill-ports:
-    @echo "💀 Killing processes on our ports..."
-    @lsof -ti:8080 | xargs kill -9 2>/dev/null || true
-    @lsof -ti:8081 | xargs kill -9 2>/dev/null || true
-    @lsof -ti:9002 | xargs kill -9 2>/dev/null || true
-    @lsof -ti:50051 | xargs kill -9 2>/dev/null || true
-    @echo "✅ Ports cleared"
+    #!/usr/bin/env bash
+    echo "💀 Checking ports to kill..."
+    kill_if_exists() {
+        local name=$1
+        local port=$2
+        local pid=$(lsof -ti:$port 2>/dev/null)
+        if [ -n "$pid" ]; then
+            kill -9 $pid 2>/dev/null
+            echo -e "   🔻 $name (:$port): \033[31mKilled PID $pid\033[0m"
+        else
+            echo -e "   ⚪ $name (:$port): \033[90mAlready free\033[0m"
+        fi
+    }
+    kill_if_exists "Gateway"      "${GATEWAY_HTTP_PORT}"
+    kill_if_exists "Shell"        "${SHELL_SERVER_HTTP_PORT}"
+    kill_if_exists "Landing"      "${LANDING_SERVER_HTTP_PORT}"
+    kill_if_exists "Landing(gRPC)" "${LANDING_SERVER_GRPC_PORT}"
+    kill_if_exists "Chat"         "${CHAT_SERVER_HTTP_PORT}"
+    kill_if_exists "Chat(gRPC)"   "${CHAT_SERVER_GRPC_PORT}"
+    kill_if_exists "Notification" "${NOTIFICATION_SERVER_HTTP_PORT}"
+    kill_if_exists "Notif(gRPC)"  "${NOTIFICATION_SERVER_GRPC_PORT}"
+    pkill -f "envoy.*gateway" && echo "   🧹 Cleaned stray Envoy process" || true
+    echo "✅ Ports Check & Cleanup Done"
 
 kill-all: kill-ports
-    @echo "💀 Killing all service processes..."
-    @pkill -f "envoy.*gateway" || true
-    @pkill -f "go run.*greeter" || true
-    @pkill -f "go run.*shell" || true
+    @echo "💀 Ensuring all processes are stopped..."
+    @pkill -f "go run.*(landing|chat|notification|shell)" || true
     @echo "✅ All services stopped"
 
 restart: kill-all
     @sleep 1
     @just dev-all
 
+# Observability Helpers
 up-obs:
-    @echo "🔭 Starting Observability Stack (VM, Loki, Promtail, Tempo, Grafana)..."
     cd deployments && docker-compose -f compose-observability.yaml up -d
-    @echo "📊 Grafana: http://localhost:3001"
-    @echo "📊 Loki: http://localhost:3100"
-    @echo "📊 VictoriaMetrics: http://localhost:8428"
 
 down-obs:
     cd deployments && docker-compose -f compose-observability.yaml down
 
 logs-obs:
-    @echo "📋 Observability stack logs:"
     cd deployments && docker-compose -f compose-observability.yaml logs -f
-
-# --- LOKI QUERIES (исправлено для GNU date) ---
-
-logs-all:
-    @echo "📋 All logs from Loki (last 1 hour):"
-    @curl -G -s "http://localhost:3100/loki/api/v1/query_range" \
-        --data-urlencode 'query={job=~".+"}' \
-        --data-urlencode "start=$(date -u -d '1 hour ago' +%s)000000000" \
-        --data-urlencode "end=$(date -u +%s)000000000" | jq -r '.data.result[]?.values[]?[1]' 2>/dev/null || echo "No logs found"
-
-logs-greeter:
-    @echo "📋 Greeter service logs (last 1 hour):"
-    @curl -G -s "http://localhost:3100/loki/api/v1/query_range" \
-        --data-urlencode 'query={service="greeter-service"}' \
-        --data-urlencode "start=$(date -u -d '1 hour ago' +%s)000000000" \
-        --data-urlencode "end=$(date -u +%s)000000000" | jq -r '.data.result[]?.values[]?[1]' 2>/dev/null || echo "No logs found"
-
-logs-gateway:
-    @echo "📋 Gateway logs (last 1 hour):"
-    @curl -G -s "http://localhost:3100/loki/api/v1/query_range" \
-        --data-urlencode 'query={container=~".*envoy.*|.*gateway.*"}' \
-        --data-urlencode "start=$(date -u -d '1 hour ago' +%s)000000000" \
-        --data-urlencode "end=$(date -u +%s)000000000" | jq -r '.data.result[]?.values[]?[1]' 2>/dev/null || echo "No logs found"
-
-logs-errors:
-    @echo "📋 All ERROR logs (last 1 hour):"
-    @curl -G -s "http://localhost:3100/loki/api/v1/query_range" \
-        --data-urlencode 'query={job=~".+"} |~ "(?i)error"' \
-        --data-urlencode "start=$(date -u -d '1 hour ago' +%s)000000000" \
-        --data-urlencode "end=$(date -u +%s)000000000" | jq -r '.data.result[]?.values[]?[1]' 2>/dev/null || echo "No logs found"
-
-# --- LOCAL FILE LOGS ---
-
-logs-gateway-local:
-    @tail -f /tmp/gateway.log 2>/dev/null || echo "No gateway logs yet. Start with: just dev-gateway"
-
-logs-greeter-local:
-    @tail -f /tmp/greeter.log 2>/dev/null || echo "No greeter logs yet. Start with: just dev-greeter"
-
-logs-shell-local:
-    @tail -f /tmp/shell.log 2>/dev/null || echo "No shell logs yet. Start with: just dev-shell"
 
 logs-local-all:
     @echo "📋 Tailing all local service logs..."
-    @tail -f /tmp/*.log 2>/dev/null || echo "No logs yet. Start services with: just dev-all"
+    @tail -f /tmp/*.log 2>/dev/null || echo "No logs yet."
 
-# Проверить что Promtail собирает логи
-logs-promtail:
-    @echo "📋 Promtail logs:"
-    @docker logs deployments-promtail-1 2>&1 | tail -50
-
-# Проверить статус Loki
-loki-status:
-    @echo "📋 Loki status:"
-    @curl -s http://localhost:3100/ready && echo "✅ Loki is ready" || echo "❌ Loki is not ready"
-    @echo ""
-    @echo "📋 Loki labels:"
-    @curl -s http://localhost:3100/loki/api/v1/labels | jq
-
-# --- DEVELOPMENT HELPERS ---
-
-watch-gateway:
-    cd services/gateway/backend && find . -name "*.go" | entr -r go run cmd/server/main.go
-
-watch-greeter:
-    cd services/greeter/backend && find . -name "*.go" | entr -r go run cmd/server/main.go
-
-# --- CONFIG MANAGEMENT ---
+watch service:
+    cd services/{{service}}/backend && find . -name "*.go" | entr -r go run cmd/server/main.go
 
 config-dev:
-    @echo "📋 Dev config:"
     @cat configs/dev.env
 
-config-staging:
-    @echo "📋 Staging config:"
-    @cat configs/staging.env
-
-config-prod:
-    @echo "📋 Production config:"
-    @cat configs/prod.env
-
-config-init:
-    @echo "📋 Copying local.env.example to local.env..."
-    @cp configs/local.env.example configs/local.env
-    @echo "✅ Edit configs/local.env for your local setup"
-
-# --- INFO ---
-
 info:
-    @echo "📦 Project Structure:"
-    @echo ""
-    @echo "Services:"
-    @echo "  - Gateway:   :8080 (HTTP)"
-    @echo "  - Shell:     :9002 (HTTP)"
-    @echo "  - Greeter:   :8081 (HTTP), :50051 (gRPC)"
-    @echo ""
-    @echo "Observability:"
-    @echo "  - Grafana:         http://localhost:3001"
-    @echo "  - Loki:            http://localhost:3100"
-    @echo "  - VictoriaMetrics: http://localhost:8428"
-    @echo "  - Tempo:           http://localhost:3200"
-    @echo ""
-    @echo "Endpoints:"
-    @echo "  - http://localhost:8080/health         (Gateway health)"
-    @echo "  - http://localhost:8080/api/greeter/*  (Proxy to Greeter)"
-    @echo "  - http://localhost:8081/api/hello      (Greeter REST)"
-    @echo "  - http://localhost:8081/health         (Greeter health)"
-    @echo "  - http://localhost:9002                (Shell/Host)"
-    @echo ""
-    @echo "Local Logs:"
-    @echo "  - /tmp/gateway.log   (Gateway stdout)"
-    @echo "  - /tmp/greeter.log   (Greeter stdout)"
-    @echo "  - /tmp/shell.log     (Shell stdout)"
-    @echo ""
-    @echo "Log Commands:"
-    @echo "  just logs-local-all    - Tail all local logs"
-    @echo "  just logs-greeter      - Query Loki for greeter logs"
-    @echo "  just logs-gateway      - Query Loki for gateway logs"
-    @echo "  just logs-promtail     - Check Promtail status"
-    @echo "  just loki-status       - Check Loki status"
+    @just check-status
 
-# --- QUICK START ---
+# Переключиться на локальную разработку
+local:
+    cp configs/local.env .env
+    @echo "✅ Switched to LOCAL environment"
 
-# Было: setup: deps gen-proto config-init
-setup: link-pkg deps gen-proto config-init
-    @echo "✅ Project setup complete!"
-    @just info
+# Переключиться на dev окружение
+dev:
+    cp configs/dev.env .env
+    @echo "✅ Switched to DEV environment"
 
-start: dev-all
-
-check:
-  nix flake check -L
+# Показать текущее окружение
+env-status:
+    @echo "Current environment variables:"
+    @grep "^APP_ENV=" .env || echo "APP_ENV not set"
+    @grep "^KAFKA_PORT=" .env || echo "KAFKA_PORT not set"

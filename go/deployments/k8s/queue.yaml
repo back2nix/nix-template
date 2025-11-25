@@ -1,0 +1,71 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: queue
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redpanda
+  namespace: queue
+spec:
+  selector:
+    matchLabels:
+      app: redpanda
+  template:
+    metadata:
+      labels:
+        app: redpanda
+    spec:
+      containers:
+      - name: redpanda
+        image: docker.redpanda.com/redpandadata/redpanda:v23.3.3
+        command:
+          - rpk
+          - redpanda
+          - start
+          - --mode
+          - dev-container
+          - --smp=1
+          - --memory=1024M
+          # KAFKA API
+          - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+          # Адрес для discovery теперь в неймспейсе queue
+          - --advertise-kafka-addr=PLAINTEXT://redpanda.queue.svc.cluster.local:9092
+          # SCHEMA REGISTRY
+          - --schema-registry-addr=0.0.0.0:8081
+          # PANDAPROXY (REST API)
+          - --pandaproxy-addr=0.0.0.0:8083
+        ports:
+        - containerPort: 9092
+        - containerPort: 9644
+        - containerPort: 8081
+        - containerPort: 8083
+        resources:
+          requests:
+             memory: "1Gi"
+             cpu: "500m"
+          limits:
+             memory: "1.5Gi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redpanda
+  namespace: queue
+spec:
+  selector:
+    app: redpanda
+  ports:
+  - name: client
+    port: 9092
+    targetPort: 9092
+  - name: admin
+    port: 9644
+    targetPort: 9644
+  - name: schemaregistry
+    port: 8081
+    targetPort: 8081
+  - name: pandaproxy
+    port: 8083
+    targetPort: 8083

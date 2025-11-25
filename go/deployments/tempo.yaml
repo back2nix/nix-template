@@ -9,20 +9,41 @@ distributor:
           endpoint: "0.0.0.0:4317"
         http:
           endpoint: "0.0.0.0:4318"
-    zipkin:
-      endpoint: "0.0.0.0:9411"
 
 ingester:
-  trace_idle_period: 10s
-  max_block_bytes: 1_000_000
+  trace_idle_period: 10s       # Как долго ждать новых спанов в трейс
+  max_block_bytes: 1_000_000   # Размер блока
+  # ИСПРАВЛЕНО: Увеличено до 5 минут. 30 сек слишком мало, создает кучу мелких файлов и ломает чтение.
   max_block_duration: 5m
+  complete_block_timeout: 5m
 
 compactor:
   compaction:
     compaction_window: 1h
+    max_block_bytes: 100_000_000
+    # ИСПРАВЛЕНО: Храним трейсы 48 часов вместо 1 часа
+    block_retention: 48h
+    # ИСПРАВЛЕНО: Храним уплотненные блоки 1 час, чтобы не удалять их прямо из-под носа при поиске
+    compacted_block_retention: 1h
+
+metrics_generator:
+  registry:
+    external_labels:
+      source: tempo
+      cluster: docker-compose
+  storage:
+    path: /tmp/tempo/generator/wal
+    remote_write:
+      - url: http://victoriametrics:8428/api/v1/write
+        send_exemplars: true
 
 storage:
   trace:
     backend: local
+    wal:
+      path: /tmp/tempo/wal
     local:
       path: /tmp/tempo/blocks
+
+overrides:
+  metrics_generator_processors: [service-graphs, span-metrics]

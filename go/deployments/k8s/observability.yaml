@@ -1,0 +1,692 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: observability
+---
+# --- VictoriaMetrics (Metrics) ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: victoriametrics
+  namespace: observability
+spec:
+  selector:
+    matchLabels:
+      app: victoriametrics
+  template:
+    metadata:
+      labels:
+        app: victoriametrics
+    spec:
+      containers:
+      - name: victoriametrics
+        image: victoriametrics/victoria-metrics:v1.93.0
+        args: ["--storageDataPath=/storage", "--httpListenAddr=:8428", "--enableTCP6"]
+        ports:
+        - containerPort: 8428
+        volumeMounts:
+        - name: storage
+          mountPath: /storage
+      volumes:
+      - name: storage
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: victoriametrics
+  namespace: observability
+spec:
+  selector:
+    app: victoriametrics
+  ports:
+  - port: 8428
+    targetPort: 8428
+---
+# --- VictoriaLogs (Logs) ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: victoria-logs
+  namespace: observability
+spec:
+  selector:
+    matchLabels:
+      app: victoria-logs
+  template:
+    metadata:
+      labels:
+        app: victoria-logs
+    spec:
+      containers:
+      - name: victoria-logs
+        image: victoriametrics/victoria-logs:v1.38.0
+        args:
+          - "--storageDataPath=/victoria-logs-data"
+          - "--httpListenAddr=:9428"
+          - "--memory.allowedPercent=60"
+        ports:
+        - containerPort: 9428
+        volumeMounts:
+        - name: storage
+          mountPath: /victoria-logs-data
+      volumes:
+      - name: storage
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: victoria-logs
+  namespace: observability
+spec:
+  selector:
+    app: victoria-logs
+  ports:
+  - port: 9428
+    targetPort: 9428
+---
+# --- Pyroscope (Profiling) ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pyroscope
+  namespace: observability
+spec:
+  selector:
+    matchLabels:
+      app: pyroscope
+  template:
+    metadata:
+      labels:
+        app: pyroscope
+    spec:
+      containers:
+      - name: pyroscope
+        image: grafana/pyroscope:latest
+        ports:
+        - containerPort: 4040
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pyroscope
+  namespace: observability
+spec:
+  selector:
+    app: pyroscope
+  ports:
+  - port: 4040
+    targetPort: 4040
+---
+# --- Redpanda Console (Kafka UI) ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redpanda-console
+  namespace: observability
+spec:
+  selector:
+    matchLabels:
+      app: redpanda-console
+  template:
+    metadata:
+      labels:
+        app: redpanda-console
+    spec:
+      containers:
+      - name: redpanda-console
+        image: redpandadata/console:v2.5.2
+        env:
+          - name: KAFKA_BROKERS
+            # FIX: Исправлено на namespace queue
+            value: "redpanda.queue.svc.cluster.local:9092"
+          - name: KAFKA_SCHEMAREGISTRY_ENABLED
+            value: "true"
+          - name: KAFKA_SCHEMAREGISTRY_URLS
+            # FIX: Исправлено на namespace queue
+            value: "http://redpanda.queue.svc.cluster.local:8081"
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redpanda-console
+  namespace: observability
+spec:
+  selector:
+    app: redpanda-console
+  ports:
+  - port: 8080
+    targetPort: 8080
+---
+# --- vmalert (Alerting) ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vmalert-rules
+  namespace: observability
+data:
+  alerts.yml: |
+    groups:
+      - name: availability
+        rules:
+          - alert: ServiceDown
+            expr: up == 0
+            for: 5s
+            labels:
+              severity: critical
+            annotations:
+              summary: "Service {{ $labels.service_name }} is down"
+              description: "Health check failed."
+      - name: quality
+        rules:
+          - alert: HighErrorRate
+            expr: |
+              (
+                sum by (service_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.*"}[20s]))
+                /
+                sum by (service_name) (rate(http_server_request_duration_seconds_count[20s])) > 0.05
+              )
+              AND
+              (
+                sum by (service_name) (rate(http_server_request_duration_seconds_count[20s])) > 0.2
+              )
+            for: 0m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High Error Rate on {{ $labels.service_name }}"
+              description: "Errors detected (calculated over last 20s)."
+          - alert: GatewayHighErrorRate
+            expr: rate(envoy_http_downstream_rq_xx{envoy_response_code_class="5"}[20s]) > 1
+            for: 0m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Envoy is returning many errors"
+              description: "High rate of 5xx errors."
+      - name: kafka
+        rules:
+          - alert: RedpandaHighLatency
+            expr: histogram_quantile(0.99, rate(redpanda_kafka_request_latency_seconds_bucket[1m])) > 0.5
+            for: 1m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High Kafka Latency"
+              description: "Redpanda request latency P99 is > 500ms"
+          - alert: RedpandaUnderReplicated
+            expr: redpanda_cluster_partition_under_replicated_replicas > 0
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Partitions Under Replicated"
+              description: "Data safety risk: partitions are not fully replicated."
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vmalert
+  namespace: observability
+spec:
+  selector:
+    matchLabels:
+      app: vmalert
+  template:
+    metadata:
+      labels:
+        app: vmalert
+    spec:
+      containers:
+      - name: vmalert
+        image: victoriametrics/vmalert:v1.93.0
+        args:
+          - "--rule=/etc/alerts/*.yml"
+          - "--datasource.url=http://victoriametrics:8428"
+          - "--remoteWrite.url=http://victoriametrics:8428"
+          - "--notifier.blackhole"
+          - "--evaluationInterval=5s"
+        ports:
+        - containerPort: 8880
+        volumeMounts:
+        - name: alerts
+          mountPath: /etc/alerts
+      volumes:
+      - name: alerts
+        configMap:
+          name: vmalert-rules
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vmalert
+  namespace: observability
+spec:
+  selector:
+    app: vmalert
+  ports:
+  - port: 8880
+    targetPort: 8880
+---
+# --- Tempo (Traces) ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tempo-config
+  namespace: observability
+data:
+  tempo.yaml: |
+    server:
+      http_listen_port: 3200
+    distributor:
+      receivers:
+        otlp:
+          protocols:
+            grpc:
+              endpoint: "0.0.0.0:4317"
+            http:
+              endpoint: "0.0.0.0:4318"
+    ingester:
+      trace_idle_period: 10s
+      max_block_bytes: 1_000_000
+      max_block_duration: 5m
+      complete_block_timeout: 5m
+    compactor:
+      compaction:
+        compaction_window: 1h
+        max_block_bytes: 100_000_000
+        block_retention: 48h
+        compacted_block_retention: 1h
+    metrics_generator:
+      registry:
+        external_labels:
+          source: tempo
+          cluster: k8s
+      storage:
+        path: /tmp/tempo/generator/wal
+        remote_write:
+          - url: http://victoriametrics.observability.svc.cluster.local:8428/api/v1/write
+            send_exemplars: true
+    storage:
+      trace:
+        backend: local
+        wal:
+          path: /tmp/tempo/wal
+        local:
+          path: /tmp/tempo/blocks
+    overrides:
+      metrics_generator_processors: [service-graphs, span-metrics]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tempo
+  namespace: observability
+spec:
+  selector:
+    matchLabels:
+      app: tempo
+  template:
+    metadata:
+      labels:
+        app: tempo
+    spec:
+      containers:
+      - name: tempo
+        image: grafana/tempo:2.3.1
+        args: ["-config.file=/etc/tempo.yaml"]
+        ports:
+        - containerPort: 3200
+        - containerPort: 4317
+        - containerPort: 4318
+        volumeMounts:
+        - name: config
+          mountPath: /etc/tempo.yaml
+          subPath: tempo.yaml
+        - name: storage
+          mountPath: /tmp/tempo
+      volumes:
+      - name: config
+        configMap:
+          name: tempo-config
+      - name: storage
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tempo
+  namespace: observability
+spec:
+  selector:
+    app: tempo
+  ports:
+  - name: http
+    port: 3200
+  - name: otlp-grpc
+    port: 4317
+  - name: otlp-http
+    port: 4318
+---
+# --- OpenTelemetry Collector ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-config
+  namespace: observability
+data:
+  config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: "0.0.0.0:4317"
+          http:
+            endpoint: "0.0.0.0:4318"
+            cors:
+              allowed_origins: ["*"]
+              allowed_headers: ["*"]
+      prometheus:
+        config:
+          scrape_configs:
+            - job_name: 'otel-collector'
+              scrape_interval: 10s
+              static_configs:
+                - targets: ['0.0.0.0:8888']
+            - job_name: 'envoy-gateway'
+              scrape_interval: 5s
+              metrics_path: /stats/prometheus
+              static_configs:
+                - targets: ['gateway.app.svc.cluster.local:9901']
+                  labels:
+                    service_name: 'gateway-proxy'
+            - job_name: 'landing-service'
+              scrape_interval: 5s
+              static_configs:
+                - targets: ['landing.app.svc.cluster.local:8081']
+                  labels:
+                    service_name: 'landing-service'
+            - job_name: 'chat-service'
+              scrape_interval: 5s
+              static_configs:
+                - targets: ['chat.app.svc.cluster.local:8082']
+                  labels:
+                    service_name: 'chat-service'
+            - job_name: 'notification-service'
+              scrape_interval: 5s
+              static_configs:
+                - targets: ['notification.app.svc.cluster.local:8085']
+                  labels:
+                    service_name: 'notification-service'
+            - job_name: 'shell-service'
+              scrape_interval: 5s
+              static_configs:
+                - targets: ['shell.app.svc.cluster.local:9002']
+                  labels:
+                    service_name: 'shell-service'
+            - job_name: 'redpanda'
+              scrape_interval: 5s
+              metrics_path: /public_metrics
+              static_configs:
+                # FIX: Исправлено на namespace queue
+                - targets: ['redpanda.queue.svc.cluster.local:9644']
+                  labels:
+                    service_name: 'redpanda-broker'
+            - job_name: 'scylla-db'
+              scrape_interval: 5s
+              static_configs:
+                # ScyllaDB в namespace storage
+                - targets: ['scylla.storage.svc.cluster.local:9180']
+                  labels:
+                    service_name: 'scylla-db'
+    processors:
+      batch:
+        timeout: 1s
+        send_batch_size: 1024
+      resourcedetection:
+        detectors: [env, system]
+        timeout: 2s
+        override: false
+      attributes:
+        actions:
+          - key: deployment.environment
+            value: k8s
+            action: upsert
+      resource:
+        attributes:
+          - key: service.name
+            from_attribute: service_name
+            action: upsert
+    exporters:
+      otlp/tempo:
+        endpoint: "tempo.observability.svc.cluster.local:4317"
+        tls:
+          insecure: true
+      prometheusremotewrite/vm:
+        endpoint: "http://victoriametrics.observability.svc.cluster.local:8428/api/v1/write"
+        resource_to_telemetry_conversion:
+          enabled: true
+      otlphttp/victorialogs:
+        endpoint: "http://victoria-logs.observability.svc.cluster.local:9428/insert/opentelemetry/v1/logs"
+        tls:
+          insecure: true
+        compression: gzip
+      debug:
+        verbosity: detailed
+        sampling_initial: 5
+        sampling_thereafter: 200
+    service:
+      telemetry:
+        metrics:
+          address: "0.0.0.0:8888"
+        logs:
+          level: info
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [batch, resourcedetection]
+          exporters: [otlp/tempo, debug]
+        metrics:
+          receivers: [otlp, prometheus]
+          processors: [batch, resourcedetection]
+          exporters: [prometheusremotewrite/vm]
+        logs:
+          receivers: [otlp]
+          processors: [batch, resourcedetection, attributes, resource]
+          exporters: [otlphttp/victorialogs, debug]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  namespace: observability
+spec:
+  selector:
+    matchLabels:
+      app: otel-collector
+  template:
+    metadata:
+      labels:
+        app: otel-collector
+    spec:
+      containers:
+      - name: otel-collector
+        image: otel/opentelemetry-collector-contrib:0.88.0
+        args: ["--config=/etc/otel/config.yaml"]
+        ports:
+        - containerPort: 4317
+        - containerPort: 4318
+        - containerPort: 8888
+        - containerPort: 9411
+        volumeMounts:
+        - name: config
+          mountPath: /etc/otel/config.yaml
+          subPath: config.yaml
+      volumes:
+      - name: config
+        configMap:
+          name: otel-collector-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  namespace: observability
+spec:
+  selector:
+    app: otel-collector
+  ports:
+  - name: grpc
+    port: 4317
+  - name: http
+    port: 4318
+  - name: metrics
+    port: 8888
+  - name: zipkin
+    port: 9411
+---
+# --- Grafana ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: observability
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: VictoriaMetrics
+        type: prometheus
+        access: proxy
+        url: http://victoriametrics:8428
+        isDefault: true
+        jsonData:
+          exemplarTraceIdDestinations:
+            - datasourceUid: Tempo
+              name: TraceID
+        editable: true
+
+      - name: VictoriaLogs
+        type: victoriametrics-logs-datasource
+        access: proxy
+        url: http://victoria-logs:9428
+        isDefault: false
+        jsonData:
+          manageAlerts: false
+        editable: true
+
+      - name: Tempo
+        type: tempo
+        access: proxy
+        orgId: 1
+        url: http://tempo:3200
+        basicAuth: false
+        isDefault: false
+        jsonData:
+          httpMethod: GET
+          tracesToLogsV2:
+            datasourceUid: 'VictoriaLogs'
+            query: '{service_name="${__trace.serviceName}"}'
+            tags: ['service_name', 'service.name']
+            filterByTraceID: true
+            filterBySpanID: false
+          tracesToLogs:
+            datasourceUid: 'VictoriaLogs'
+            filterByTraceID: true
+            filterBySpanID: false
+        editable: true
+
+      - name: Pyroscope
+        type: grafana-pyroscope-datasource
+        access: proxy
+        url: http://pyroscope:4040
+        isDefault: false
+        editable: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards-config
+  namespace: observability
+data:
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: 'Default'
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: observability
+spec:
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana:11.1.0
+        env:
+        - name: GF_AUTH_ANONYMOUS_ENABLED
+          value: "true"
+        - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+          value: "Admin"
+        - name: GF_FEATURE_TOGGLES_ENABLE
+          value: "traceqlEditor"
+        - name: GF_INSTALL_PLUGINS
+          value: "victoriametrics-logs-datasource,grafana-pyroscope-app"
+        - name: GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS
+          value: "victoriametrics-logs-datasource,grafana-pyroscope-app"
+        ports:
+        - containerPort: 3000
+        volumeMounts:
+        - name: datasources
+          mountPath: /etc/grafana/provisioning/datasources
+        - name: dashboards-config
+          mountPath: /etc/grafana/provisioning/dashboards
+        - name: dashboards-json
+          mountPath: /var/lib/grafana/dashboards
+      volumes:
+      - name: datasources
+        configMap:
+          name: grafana-datasources
+      - name: dashboards-config
+        configMap:
+          name: grafana-dashboards-config
+      - name: dashboards-json
+        projected:
+          sources:
+          - configMap:
+              name: dashboard-alerts
+          - configMap:
+              name: dashboard-microservices
+          - configMap:
+              name: dashboard-kafka
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: observability
+spec:
+  type: LoadBalancer
+  selector:
+    app: grafana
+  ports:
+  - port: 3001
+    targetPort: 3000

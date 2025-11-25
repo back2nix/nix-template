@@ -133,12 +133,14 @@ docker run --rm -it \
 
 ```
 # Все логи от сервиса
-{"service.name"="greeter-service"}
+{"service.name"="chat-service"}
+{"service.name"="notification-service"}
 
 # Несколько сервисов
-{"service.name"=~"greeter-service|shell-service"}
+{"service.name"=~"notification-service|shell-service"}
 
 # Только ошибки
+{"service.name"=~".*"}
 {"service.name"=~".*"} AND level:ERROR
 
 # Логи с определенным trace_id

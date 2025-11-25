@@ -1,145 +1,463 @@
 {
-  "annotations": { "list": [] },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
   "editable": true,
-  "gnetId": null,
+  "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
   "links": [],
   "panels": [
     {
-      "title": "Gateway Traffic (Requests per Minute)",
-      "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
-          "expr": "increase(envoy_http_downstream_rq_total{job=\"envoy-gateway\"}[1m])",
-          "legendFormat": "Reqs/min ({{ envoy_response_code_class }})"
-        }
-      ],
+      "description": "Shows traffic routed to upstream services. Grouped by Cluster Name and Response Code.",
       "fieldConfig": {
         "defaults": {
-          "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 15,
-            "showPoints": "auto"
+          "color": {
+            "mode": "palette-classic"
           },
-          "unit": "short"
-        }
-      },
-      "description": "Shows absolute number of requests per minute (increase). Better for low traffic dev environments."
-    },
-    {
-      "title": "Go Memory Details",
-      "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
-          "expr": "process_resident_memory_bytes{job=\"$service\"}",
-          "legendFormat": "Physical RAM (RSS)"
-        },
-        {
-          "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
-          "expr": "go_memstats_alloc_bytes{job=\"$service\"}",
-          "legendFormat": "App Heap (Code)"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bytes",
-          "custom": { "fillOpacity": 10 }
-        }
-      }
-    },
-    {
-      "title": "Active Goroutines",
-      "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 8 },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
-          "expr": "go_goroutines{job=\"$service\"}",
-          "legendFormat": "Goroutines"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "thresholds" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "orange", "value": 100 },
-              { "color": "red", "value": 1000 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (envoy_cluster_name, envoy_response_code_class) (increase(envoy_cluster_upstream_rq_total{job=\"envoy-gateway\"}[1m]))",
+          "legendFormat": "{{ envoy_cluster_name }} ({{ envoy_response_code_class }}xx)",
+          "refId": "A"
+        }
+      ],
+      "title": "Gateway Traffic (Requests per Minute)",
+      "type": "timeseries"
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 2,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "process_resident_memory_bytes{job=\"$service\"}",
+          "legendFormat": "Physical RAM (RSS)",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "go_memstats_alloc_bytes{job=\"$service\"}",
+          "legendFormat": "App Heap (Code)",
+          "refId": "B"
+        }
+      ],
+      "title": "Go Memory Details",
+      "type": "timeseries"
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 100
+              },
+              {
+                "color": "red",
+                "value": 1000
+              }
             ]
           }
-        }
-      }
-    },
-    {
-      "title": "Recent Traces (Tempo)",
-      "type": "table",
-      "gridPos": { "h": 8, "w": 18, "x": 6, "y": 8 },
-      "datasource": { "type": "tempo", "uid": "Tempo" },
-      "targets": [
-        {
-            "refId": "A",
-            "queryType": "nativeSearch",
-            "limit": 20
-        }
-      ],
-      "description": "List of recent traces. If empty, generate traffic."
-    },
-    {
-      "title": "Live Logs (VictoriaLogs)",
-      "type": "logs",
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 16 },
-      "datasource": { "type": "victoriametrics-logs-datasource", "uid": "VictoriaLogs" },
-      "targets": [
-        {
-          "datasource": { "type": "victoriametrics-logs-datasource", "uid": "VictoriaLogs" },
-          "refId": "A",
-          "expr": "service.name:$service",
-          "queryType": "range",
-          "legendFormat": ""
-        }
-      ],
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 8
+      },
+      "id": 3,
       "options": {
-        "showTime": true,
-        "showLabels": false,
-        "wrapLogMessage": true,
-        "sortOrder": "Descending",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.1.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "go_goroutines{job=\"$service\"}",
+          "legendFormat": "Goroutines",
+          "refId": "A"
+        }
+      ],
+      "title": "Active Goroutines",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "tempo",
+        "uid": "P214B5B846CF3925F"
+      },
+      "description": "List of recent traces.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "mode": "auto"
+            },
+            "inspect": false
+          },
+          "color": {
+            "mode": "fixed"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "traceID"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 220
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Start time"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 190
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 18,
+        "x": 6,
+        "y": 8
+      },
+      "id": 4,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "enablePagination": true,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Start time"
+          }
+        ]
+      },
+      "pluginVersion": "11.1.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "tempo",
+            "uid": "P214B5B846CF3925F"
+          },
+          "filters": [
+            {
+              "id": "duration",
+              "operator": ">",
+              "scope": "span",
+              "value": "1ms"
+            }
+          ],
+          "limit": 100,
+          "queryType": "traceqlSearch",
+          "refId": "A",
+          "tableType": "traces"
+        }
+      ],
+      "title": "Recent Traces (Tempo)",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "VictoriaLogs"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "id": 5,
+      "options": {
         "dedupStrategy": "none",
-        "enableLogDetails": true
-      }
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "VictoriaLogs"
+          },
+          "expr": "service.name:$service",
+          "legendFormat": "",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Live Logs (VictoriaLogs)",
+      "type": "logs"
     }
   ],
   "refresh": "5s",
-  "schemaVersion": 38,
-  "tags": ["observability"],
+  "schemaVersion": 39,
+  "tags": [
+    "observability"
+  ],
   "templating": {
     "list": [
       {
-        "name": "service",
-        "type": "query",
-        "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
-        "query": "label_values(go_goroutines, job)",
-        "refresh": 1,
-        "sort": 1,
-        "multi": false,
-        "includeAll": false,
-        "label": "Service",
-        "hide": 0,
         "current": {
           "selected": false,
-          "text": "greeter-service",
-          "value": "greeter-service"
-        }
+          "text": "chat-service",
+          "value": "chat-service"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "VictoriaMetrics"
+        },
+        "definition": "",
+        "hide": 0,
+        "includeAll": false,
+        "label": "Service",
+        "multi": false,
+        "name": "service",
+        "options": [],
+        "query": "label_values(go_goroutines, job)",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
       }
     ]
   },
-  "time": { "from": "now-15m", "to": "now" },
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
   "title": "Microservices Overview (Final)",
   "uid": "microservices-overview",
-  "version": 10
+  "version": 3,
+  "weekStart": ""
 }

@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-runtime-config
+  namespace: app
+data:
+  config.js: |
+    window.__RUNTIME_CONFIG__ = {
+      GATEWAY_URL: window.location.origin,
+      LANDING_REMOTE_URL: window.location.origin + '/api/landing/remoteEntry.js',
+      CHAT_REMOTE_URL: window.location.origin + '/api/chat/remoteEntry.js',
+      OTEL_ENDPOINT: window.location.origin + '/v1/traces'
+    };

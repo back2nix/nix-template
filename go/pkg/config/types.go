@@ -30,9 +30,15 @@ type LogConfig struct {
 	Format string `mapstructure:"format"`
 }
 
-// ServerConfig базовая конфигурация HTTP сервера
+// TelemetryConfig конфигурация observability
+type TelemetryConfig struct {
+	OtelEndpoint      string `mapstructure:"otel_endpoint"`
+	PyroscopeEndpoint string `mapstructure:"pyroscope_endpoint"`
+	ServiceName       string `mapstructure:"service_name"` // Имя сервиса для трейсинга
+}
+
+// ServerConfig базовая конфигурация HTTP/GRPC сервера
 type ServerConfig struct {
-	Host         string `mapstructure:"host"`
 	HTTPPort     string `mapstructure:"http_port"`
 	GRPCPort     string `mapstructure:"grpc_port"`
 	StaticDir    string `mapstructure:"static_dir"`
@@ -40,8 +46,26 @@ type ServerConfig struct {
 	WriteTimeout int    `mapstructure:"write_timeout"`
 }
 
+// KafkaConfig конфигурация для брокера сообщений
+type KafkaConfig struct {
+	Brokers []string `mapstructure:"brokers"`
+	Topic   string   `mapstructure:"topic"`
+	GroupID string   `mapstructure:"group_id"`
+}
+
+// ServicesConfig адреса зависимых микросервисов (Service Discovery)
+type ServicesConfig struct {
+	NotificationEndpoint string `mapstructure:"notification_endpoint"`
+	ChatEndpoint         string `mapstructure:"chat_endpoint"`
+	LandingEndpoint      string `mapstructure:"landing_endpoint"`
+}
+
 // AppConfig общая конфигурация приложения
 type AppConfig struct {
-	Server ServerConfig `mapstructure:"server"`
-	Log    LogConfig    `mapstructure:"log"`
+	Server    ServerConfig    `mapstructure:"server"`
+	Log       LogConfig       `mapstructure:"log"`
+	Telemetry TelemetryConfig `mapstructure:"telemetry"`
+	Kafka     KafkaConfig     `mapstructure:"kafka"`
+	Services  ServicesConfig  `mapstructure:"services"`
+	// Можно добавлять специфичные секции, если нужно
 }

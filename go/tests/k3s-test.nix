@@ -16,10 +16,10 @@ let
     contents = baseImageContents ++ [ packages.gateway ];
   };
 
-  greeterImage = pkgs.dockerTools.streamLayeredImage {
-    name = "greeter";
+  landingImage = pkgs.dockerTools.streamLayeredImage {
+    name = "landing";
     tag = "latest";
-    contents = baseImageContents ++ [ packages.greeter ];
+    contents = baseImageContents ++ [ packages.landing ];
   };
 
   shellImage = pkgs.dockerTools.streamLayeredImage {
@@ -30,12 +30,12 @@ let
 
   k8sManifests = pkgs.writeText "app-deployment.yaml" ''
     ---
-    # --- GREETER SERVICE ---
+    # --- LANDING SERVICE ---
     apiVersion: v1
     kind: Service
-    metadata: { name: greeter }
+    metadata: { name: landing }
     spec:
-      selector: { app: greeter }
+      selector: { app: landing }
       ports:
         - name: grpc
           port: 50051
@@ -46,21 +46,21 @@ let
     ---
     apiVersion: apps/v1
     kind: Deployment
-    metadata: { name: greeter }
+    metadata: { name: landing }
     spec:
-      selector: { matchLabels: { app: greeter } }
+      selector: { matchLabels: { app: landing } }
       template:
-        metadata: { labels: { app: greeter } }
+        metadata: { labels: { app: landing } }
         spec:
           containers:
-          - name: greeter
-            image: greeter:latest
+          - name: landing
+            image: landing:latest
             imagePullPolicy: Never
-            command: ["/bin/greeter-backend"]
+            command: ["/bin/landing-backend"]
             env:
             - { name: APP_ENV, value: "prod" }
-            - { name: GREETER_HTTP_PORT, value: "8081" }
-            - { name: GREETER_GRPC_PORT, value: "50051" }
+            - { name: LANDING_HTTP_PORT, value: "8081" }
+            - { name: LANDING_GRPC_PORT, value: "50051" }
 
     ---
     # --- SHELL SERVICE ---
@@ -120,9 +120,7 @@ let
             command: ["/bin/start-gateway"]
             env:
             - { name: GATEWAY_HTTP_PORT, value: "8085" }
-            # Мы не задаем GREETER_HOST/SHELL_HOST явно.
-            # Скрипт start-gateway сам возьмет их из K8s Env Vars (GREETER_SERVICE_HOST),
-            # которые K8s пробросит, так как сервисы созданы раньше деплоймента.
+            # Env variables for service discovery are injected by K8s
   '';
 
 in pkgs.testers.nixosTest {
@@ -135,7 +133,7 @@ in pkgs.testers.nixosTest {
       extraFlags = toString [
         "--disable traefik"
         "--disable metrics-server"
-        "--disable coredns" # CoreDNS отключен, так как нет образа
+        "--disable coredns"
         "--disable local-storage"
         "--pause-image test.local/pause:local"
       ];
@@ -159,17 +157,17 @@ in pkgs.testers.nixosTest {
     machine.wait_until_succeeds("kubectl cluster-info")
 
     machine.succeed("${gatewayImage} | ctr -n k8s.io image import -")
-    machine.succeed("${greeterImage} | ctr -n k8s.io image import -")
+    machine.succeed("${landingImage} | ctr -n k8s.io image import -")
     machine.succeed("${shellImage} | ctr -n k8s.io image import -")
 
     machine.succeed("kubectl apply -f ${k8sManifests}")
 
-    machine.wait_until_succeeds("kubectl get pods | grep greeter")
+    machine.wait_until_succeeds("kubectl get pods | grep landing")
     machine.wait_until_succeeds("kubectl get pods | grep shell")
     machine.wait_until_succeeds("kubectl get pods | grep gateway")
 
     machine.wait_until_succeeds("kubectl get pods | grep gateway | grep Running")
-    machine.wait_until_succeeds("kubectl get pods | grep greeter | grep Running")
+    machine.wait_until_succeeds("kubectl get pods | grep landing | grep Running")
     machine.wait_until_succeeds("kubectl get pods | grep shell | grep Running")
 
     print("Waiting for Gateway Service on port 30085...")
@@ -179,8 +177,10 @@ in pkgs.testers.nixosTest {
     print("Checking Gateway Health on :30085...")
     machine.wait_until_succeeds("curl -sSf http://localhost:30085/health | grep 'ok'", timeout=60)
 
-    print("Checking Gateway -> Greeter proxy on :30085...")
-    output = machine.succeed("curl -v -s 'http://localhost:30085/api/greeter/api/hello?name=NixOS'")
+    print("Checking Gateway -> Landing proxy on :30085...")
+    # Envoy rewrite: /api/landing/hello -> /hello
+    # Backend handler: /hello
+    output = machine.succeed("curl -v -s 'http://localhost:30085/api/landing/hello?name=NixOS'")
 
     print(f"\n========= RESPONSE FROM GATEWAY =========\n{output}\n=========================================\n")
 

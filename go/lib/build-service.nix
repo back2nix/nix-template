@@ -1,19 +1,23 @@
-{ pkgs, gomod2nix, name, srcBackend, srcFrontend, port, yarnHash }:
+{ pkgs, gomod2nix, name, srcBackend, srcFrontend ? null, port, yarnHash ? null, basePath ? "/", otelEndpoint ? "http://localhost:4318/v1/traces", gatewayUrl ? "http://localhost:8080" }:
 
 let
-  # Объединяем backend и pkg в один источник
+  # 1. Объединяем backend и pkg
   combinedSrc = pkgs.runCommand "combined-src" {} ''
     mkdir -p $out
 
     # Копируем backend
     cp -r ${srcBackend}/* $out/
 
-    # Копируем pkg в корень (где go.mod)
+    # Копируем pkg
     mkdir -p $out/pkg
     cp -r ${../pkg}/* $out/pkg/
+
+    # ВАЖНО: Удаляем go.mod/go.sum из pkg, чтобы он стал частью модуля сервиса
+    # и не требовал replace директив
+    rm -f $out/pkg/go.mod $out/pkg/go.sum
   '';
 
-  # Backend (Go)
+  # 2. Сборка Backend (Go)
   backend = pkgs.buildGoApplication {
     pname = "${name}-backend";
     version = "0.1.0";
@@ -32,8 +36,10 @@ let
     '';
   };
 
-  # Frontend (Vue.js)
-  frontend = pkgs.mkYarnPackage {
+  # 3. Сборка Frontend (Vue.js) - Опционально
+  hasFrontend = srcFrontend != null;
+
+  frontend = if hasFrontend then pkgs.mkYarnPackage {
     pname = "${name}-frontend";
     version = "0.1.0";
     src = srcFrontend;
@@ -50,6 +56,14 @@ let
     '';
 
     buildPhase = ''
+      export VITE_BASE_PATH="${basePath}"
+      export VITE_OTEL_ENDPOINT="${otelEndpoint}"
+      export VITE_GATEWAY_URL="${gatewayUrl}"
+      # Для shell дополнительно передаем remote URLs
+      ${if name == "shell" then ''
+        export VITE_LANDING_REMOTE_URL="${gatewayUrl}/api/landing/remoteEntry.js"
+        export VITE_CHAT_REMOTE_URL="${gatewayUrl}/api/chat/remoteEntry.js"
+      '' else ""}
       yarn --offline build
     '';
 
@@ -59,19 +73,33 @@ let
     '';
 
     distPhase = "true";
-  };
+  } else null;
+
+  # Формируем список путей для объединения
+  servicePaths = [ backend ] ++ (if hasFrontend then [ frontend ] else []);
+
+  # Используем абсолютный путь к статике из Nix store
+  staticPath = if hasFrontend then "${frontend}/static" else "";
+
+  # Uppercase имя сервиса для префикса переменных
+  servicePrefix = pkgs.lib.toUpper name;
+
+  # Формируем скрипт запуска с правильными префиксами
+  startScript = ''
+#!/bin/sh
+export ${servicePrefix}_SERVER_HTTP_PORT=${port}
+${if hasFrontend then "export ${servicePrefix}_SERVER_STATIC_DIR=${staticPath}" else ""}
+exec ${backend}/bin/${name}-backend
+'';
 
 in pkgs.symlinkJoin {
   name = "${name}-service";
-  paths = [ backend frontend ];
+  paths = servicePaths;
 
   postBuild = ''
     mkdir -p $out/bin
     cat > $out/bin/start-${name} <<EOF
-#!/bin/sh
-export SERVER_STATIC_DIR=${frontend}/static
-export HTTP_PORT=${port}
-exec ${backend}/bin/${name}-backend
+${startScript}
 EOF
     chmod +x $out/bin/start-${name}
   '';

@@ -1,52 +1,69 @@
 groups:
-  - name: critical-alerts
+  - name: availability
     rules:
-      # 1. Availability: Сервис недоступен (не отдает метрики)
+      # 1. DEAD CHECK
+      # Срабатывает, если сервис лежит 5 секунд. Пропадает мгновенно.
       - alert: ServiceDown
         expr: up == 0
-        for: 1m
+        for: 5s
         labels:
           severity: critical
         annotations:
           summary: "Service {{ $labels.service_name }} is down"
-          description: "Service has been down for more than 1 minute."
+          description: "Health check failed."
 
-      # 2. Error Rate: Высокий процент 5xx ошибок (> 5%)
-      # Используем метрики от otelhttp: http_server_request_duration_seconds_count
+  - name: quality
+    rules:
+      # 2. QUALITY CHECK
+      # Изменили окно с [1m] на [20s].
+      # Теперь алерт забывает ошибки через 20 секунд после того, как они прекратились.
       - alert: HighErrorRate
         expr: |
-          sum by (service_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.*"}[5m]))
-          /
-          sum by (service_name) (rate(http_server_request_duration_seconds_count[5m])) > 0.05
-        for: 2m
-        labels:
-          severity: critical
-        annotations:
-          summary: "High Error Rate on {{ $labels.service_name }}"
-          description: "Error rate is above 5% for the last 2 minutes."
-
-      # 3. Latency: Высокое время ответа (P95 > 500ms)
-      # Вычисляем 95-й перцентиль по гистограмме
-      - alert: HighLatency
-        expr: |
-          histogram_quantile(0.95, sum by (le, service_name) (rate(http_server_request_duration_seconds_bucket[5m]))) > 0.5
-        for: 5m
+          (
+            sum by (service_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.*"}[20s]))
+            /
+            sum by (service_name) (rate(http_server_request_duration_seconds_count[20s])) > 0.05
+          )
+          AND
+          (
+            sum by (service_name) (rate(http_server_request_duration_seconds_count[20s])) > 0.2
+          )
+        for: 0m
         labels:
           severity: warning
         annotations:
-          summary: "High Latency on {{ $labels.service_name }}"
-          description: "95th percentile of request duration is > 500ms."
+          summary: "High Error Rate on {{ $labels.service_name }}"
+          description: "Errors detected (calculated over last 20s)."
 
-      # 4. Envoy Gateway Errors: Ошибки на уровне шлюза
-      # Метрика envoy_http_downstream_rq_xx показывает ответы клиентам
+      # 3. ENVOY CHECK
+      # Тоже уменьшили окно до 20 секунд.
       - alert: GatewayHighErrorRate
-        expr: |
-          sum(rate(envoy_http_downstream_rq_xx{envoy_response_code_class="5"}[5m]))
-          /
-          sum(rate(envoy_http_downstream_rq_total[5m])) > 0.05
-        for: 2m
+        expr: rate(envoy_http_downstream_rq_xx{envoy_response_code_class="5"}[20s]) > 1
+        for: 0m
         labels:
           severity: critical
         annotations:
-          summary: "Envoy Gateway High Error Rate"
-          description: "Gateway is returning 5xx errors > 5%."
+          summary: "Envoy is returning many errors"
+          description: "High rate of 5xx errors."
+
+  # --- НОВЫЙ БЛОК: KAFKA / REDPANDA ---
+  - name: kafka
+    rules:
+      - alert: RedpandaHighLatency
+        # Срабатывает, если P99 латенси выше 500мс
+        expr: histogram_quantile(0.99, rate(redpanda_kafka_request_latency_seconds_bucket[1m])) > 0.5
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High Kafka Latency"
+          description: "Redpanda request latency P99 is > 500ms"
+
+      - alert: RedpandaUnderReplicated
+        expr: redpanda_cluster_partition_under_replicated_replicas > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Partitions Under Replicated"
+          description: "Data safety risk: partitions are not fully replicated."

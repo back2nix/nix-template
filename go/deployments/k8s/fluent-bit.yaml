@@ -1,0 +1,250 @@
+# deployments/k8s/fluent-bit.yaml
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: logging
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fluent-bit
+  namespace: logging
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fluent-bit
+rules:
+  - apiGroups: [""]
+    resources:
+      - namespaces
+      - pods
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: fluent-bit
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fluent-bit
+subjects:
+  - kind: ServiceAccount
+    name: fluent-bit
+    namespace: logging
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-config
+  namespace: logging
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush        1
+        Daemon       Off
+        Log_Level    info
+        Parsers_File parsers.conf
+
+    [INPUT]
+        Name              tail
+        Path              /var/log/containers/*_app_*.log,/var/log/containers/*_observability_*.log
+        Parser            cri
+        Tag               kube.*
+        Refresh_Interval  5
+        Mem_Buf_Limit     5MB
+        Skip_Long_Lines   On
+
+    [FILTER]
+        Name                kubernetes
+        Match               kube.*
+        Kube_URL            https://kubernetes.default.svc:443
+        Kube_CA_File        /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        Kube_Token_File     /var/run/secrets/kubernetes.io/serviceaccount/token
+        Kube_Tag_Prefix     kube.var.log.containers.
+        Merge_Log           On
+        Keep_Log            On
+        K8S-Logging.Parser  On
+        K8S-Logging.Exclude On
+        Labels              On
+        Annotations         On
+
+    # Парсим JSON логи от приложений
+    [FILTER]
+        Name          parser
+        Match         kube.*
+        Key_Name      log
+        Parser        json
+        Reserve_Data  On
+        Preserve_Key  On
+
+    # КРИТИЧНО: Создаем _msg для VictoriaLogs
+    # Если есть поле msg (из JSON), копируем его в _msg
+    # Если нет msg, копируем весь log в _msg
+    [FILTER]
+        Name          lua
+        Match         kube.*
+        script        /fluent-bit/scripts/enrich.lua
+        call          create_msg_field
+
+    # Извлекаем kubernetes метаданные на верхний уровень
+    [FILTER]
+        Name          nest
+        Match         kube.*
+        Operation     lift
+        Nested_under  kubernetes
+
+    # Добавляем cluster label
+    [FILTER]
+        Name    modify
+        Match   kube.*
+        Add     cluster k3s
+
+    # Копируем labels.app в service_name если есть
+    [FILTER]
+        Name          lua
+        Match         kube.*
+        script        /fluent-bit/scripts/enrich.lua
+        call          enrich_service_name
+
+    [OUTPUT]
+        Name             http
+        Match            kube.*
+        Host             victoria-logs.observability.svc.cluster.local
+        Port             9428
+        URI              /insert/jsonline
+        Format           json_lines
+        Header           Content-Type application/x-ndjson
+        json_date_key    timestamp
+        json_date_format iso8601
+
+  parsers.conf: |
+    [PARSER]
+        Name        cri
+        Format      regex
+        Regex       ^(?<time>[^ ]+) (?<stream>stdout|stderr) (?<logtag>[^ ]*) (?<log>.*)$
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L%z
+
+    [PARSER]
+        Name        json
+        Format      json
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%LZ
+
+  enrich.lua: |
+    function create_msg_field(tag, timestamp, record)
+        -- VictoriaLogs требует поле _msg
+        -- Приоритет: msg из JSON -> log (оригинальная строка) -> пустая строка
+        if record["msg"] ~= nil and record["msg"] ~= "" then
+            record["_msg"] = record["msg"]
+        elseif record["log"] ~= nil and record["log"] ~= "" then
+            record["_msg"] = record["log"]
+        else
+            record["_msg"] = ""
+        end
+
+        return 2, timestamp, record
+    end
+
+    function enrich_service_name(tag, timestamp, record)
+        -- Копируем labels.app в service_name если service.name не установлен
+        if record["labels"] ~= nil and record["labels"]["app"] ~= nil then
+            if record["service.name"] == nil or record["service.name"] == "" then
+                record["service_name"] = record["labels"]["app"]
+            end
+        end
+
+        -- Копируем service.name из JSON лога если есть
+        if record["service.name"] ~= nil and record["service.name"] ~= "" then
+            record["service_name"] = record["service.name"]
+        end
+
+        return 2, timestamp, record
+    end
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-scripts
+  namespace: logging
+data:
+  enrich.lua: |
+    function create_msg_field(tag, timestamp, record)
+        if record["msg"] ~= nil and record["msg"] ~= "" then
+            record["_msg"] = record["msg"]
+        elseif record["log"] ~= nil and record["log"] ~= "" then
+            record["_msg"] = record["log"]
+        else
+            record["_msg"] = ""
+        end
+
+        return 2, timestamp, record
+    end
+
+    function enrich_service_name(tag, timestamp, record)
+        if record["labels"] ~= nil and record["labels"]["app"] ~= nil then
+            if record["service.name"] == nil or record["service.name"] == "" then
+                record["service_name"] = record["labels"]["app"]
+            end
+        end
+
+        if record["service.name"] ~= nil and record["service.name"] ~= "" then
+            record["service_name"] = record["service.name"]
+        end
+
+        return 2, timestamp, record
+    end
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluent-bit
+  namespace: logging
+  labels:
+    app: fluent-bit
+spec:
+  selector:
+    matchLabels:
+      app: fluent-bit
+  template:
+    metadata:
+      labels:
+        app: fluent-bit
+    spec:
+      serviceAccountName: fluent-bit
+      containers:
+      - name: fluent-bit
+        image: fluent/fluent-bit:2.2
+        resources:
+          limits:
+            memory: 200Mi
+          requests:
+            cpu: 100m
+            memory: 100Mi
+        volumeMounts:
+        - name: varlog
+          mountPath: /var/log
+          readOnly: true
+        - name: varlibdockercontainers
+          mountPath: /var/lib/docker/containers
+          readOnly: true
+        - name: fluent-bit-config
+          mountPath: /fluent-bit/etc/
+        - name: fluent-bit-scripts
+          mountPath: /fluent-bit/scripts/
+      volumes:
+      - name: varlog
+        hostPath:
+          path: /var/log
+      - name: varlibdockercontainers
+        hostPath:
+          path: /var/lib/docker/containers
+      - name: fluent-bit-config
+        configMap:
+          name: fluent-bit-config
+      - name: fluent-bit-scripts
+        configMap:
+          name: fluent-bit-scripts

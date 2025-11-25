@@ -32,14 +32,19 @@ datasources:
       httpMethod: GET
       tracesToLogsV2:
         datasourceUid: 'VictoriaLogs'
-        # ИСПРАВЛЕНО: правильный синтаксис для VictoriaLogs
-        query: '{"service.name"="${__trace.serviceName}"}'
-        tags: ['service.name']
+        query: '{service_name="${__trace.serviceName}"}'
+        tags: ['service_name', 'service.name']
         filterByTraceID: true
         filterBySpanID: false
       tracesToLogs:
         datasourceUid: 'VictoriaLogs'
-        # Fallback для старых версий Grafana
         filterByTraceID: true
         filterBySpanID: false
+    editable: true
+
+  - name: Pyroscope
+    type: grafana-pyroscope-datasource
+    access: proxy
+    url: http://pyroscope:4040
+    isDefault: false
     editable: true

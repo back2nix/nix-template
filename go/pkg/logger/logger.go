@@ -9,10 +9,11 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// Log - глобальный инстанс логгера
 var Log *slog.Logger
 
-// Init инициализирует логгер в формате JSON для удобного парсинга в OTel/VictoriaLogs
+// Init инициализирует логгер.
+// Приложение пишет ТОЛЬКО в stdout (JSON).
+// Сбор логов делает OTel Collector (docker-compose) или Fluent Bit (k8s).
 func Init(serviceName string, level string) {
 	var logLevel slog.Level
 
@@ -29,20 +30,20 @@ func Init(serviceName string, level string) {
 
 	opts := &slog.HandlerOptions{
 		Level: logLevel,
-		// AddSource: true, // Можно включить для отладки
 	}
 
-	// ОБЯЗАТЕЛЬНО JSONHandler для структурированных логов
-	handler := slog.NewJSONHandler(os.Stdout, opts)
+	jsonHandler := slog.NewJSONHandler(os.Stdout, opts)
 
-	Log = slog.New(handler).With(
-		slog.String("service", serviceName),
+	// КРИТИЧНО: используем "service.name" (стандарт OpenTelemetry)
+	Log = slog.New(jsonHandler).With(
+		slog.String("service.name", serviceName),
 	)
 
 	slog.SetDefault(Log)
 }
 
 // withTrace добавляет TraceID и SpanID из контекста в поля лога
+// Это позволяет связывать логи с трейсами в Grafana (Trace to Logs)
 func withTrace(ctx context.Context) *slog.Logger {
 	spanContext := trace.SpanFromContext(ctx).SpanContext()
 	if spanContext.IsValid() {
@@ -54,22 +55,18 @@ func withTrace(ctx context.Context) *slog.Logger {
 	return Log
 }
 
-// Info логирует информационное сообщение с контекстом
 func Info(ctx context.Context, msg string, args ...any) {
 	withTrace(ctx).InfoContext(ctx, msg, args...)
 }
 
-// Error логирует ошибку с контекстом
 func Error(ctx context.Context, msg string, args ...any) {
 	withTrace(ctx).ErrorContext(ctx, msg, args...)
 }
 
-// Debug логирует отладочное сообщение
 func Debug(ctx context.Context, msg string, args ...any) {
 	withTrace(ctx).DebugContext(ctx, msg, args...)
 }
 
-// Warn логирует предупреждение
 func Warn(ctx context.Context, msg string, args ...any) {
 	withTrace(ctx).WarnContext(ctx, msg, args...)
 }

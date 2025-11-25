@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package notification;
+
+// Используем относительный путь, чтобы код генерировался в ту же директорию.
+// Так как pkg симлинкуется в разные модули (chat/pkg и notification/pkg),
+// это самый надежный способ импорта.
+option go_package = "./;notification";
+
+service NotificationService {
+  // Отправить уведомление (которое потом уйдет в WebSocket)
+  rpc Send (SendRequest) returns (SendReply) {}
+}
+
+message SendRequest {
+  string user_id = 1;
+  string event_type = 2;
+  // Передаем payload как JSON строку, чтобы сохранить гибкость
+  // и не типизировать каждое сообщение чата/системы в proto.
+  bytes payload_json = 3;
+}
+
+message SendReply {
+  bool success = 1;
+}

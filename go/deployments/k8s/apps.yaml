@@ -1,0 +1,313 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: app
+---
+# --- Notification Service (Fast Dev) ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification
+  namespace: app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: notification
+  template:
+    metadata:
+      labels:
+        app: notification
+    spec:
+      containers:
+      - name: notification
+        image: dev-base:latest
+        imagePullPolicy: Never
+        # Запускаем скрипт запуска из Nix Store
+        command: ["/bin/bash", "-c", "${NOTIFICATION_BIN}/bin/start-notification"]
+        volumeMounts:
+        - name: nix-store
+          mountPath: /nix/store
+          readOnly: true
+        env:
+        - name: NOTIFICATION_SERVER_HTTP_PORT
+          value: "8085"
+        - name: NOTIFICATION_SERVER_GRPC_PORT
+          value: "50055"
+        - name: NOTIFICATION_TELEMETRY_OTEL_ENDPOINT
+          value: "otel-collector.observability.svc.cluster.local:4317"
+        - name: NOTIFICATION_KAFKA_BROKERS
+          # Стучимся в неймспейс queue
+          value: "redpanda.queue.svc.cluster.local:9092"
+        - name: NOTIFICATION_KAFKA_TOPIC
+          value: "chat-messages"
+        - name: NOTIFICATION_KAFKA_GROUP_ID
+          value: "notification-k8s-group"
+      volumes:
+      - name: nix-store
+        hostPath:
+          path: /nix/store
+          type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: notification
+  namespace: app
+spec:
+  selector:
+    app: notification
+  ports:
+  - name: http
+    port: 8085
+  - name: grpc
+    port: 50055
+---
+# --- Chat Service (Fast Dev) ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chat
+  namespace: app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: chat
+  template:
+    metadata:
+      labels:
+        app: chat
+    spec:
+      containers:
+      - name: chat
+        image: dev-base:latest
+        imagePullPolicy: Never
+        command: ["/bin/bash", "-c", "${CHAT_BIN}/bin/start-chat"]
+        volumeMounts:
+        - name: nix-store
+          mountPath: /nix/store
+          readOnly: true
+        env:
+        - name: CHAT_SERVER_HTTP_PORT
+          value: "8082"
+        - name: CHAT_SERVER_GRPC_PORT
+          value: "50052"
+        - name: CHAT_SERVICES_NOTIFICATION_ENDPOINT
+          value: "notification.app.svc.cluster.local:50055"
+        - name: CHAT_KAFKA_BROKERS
+          # Стучимся в неймспейс queue
+          value: "redpanda.queue.svc.cluster.local:9092"
+        - name: CHAT_KAFKA_TOPIC
+          value: "chat-messages"
+        - name: CHAT_KAFKA_GROUP_ID
+          value: "chat-k8s-group"
+        - name: CHAT_TELEMETRY_OTEL_ENDPOINT
+          value: "otel-collector.observability.svc.cluster.local:4317"
+      volumes:
+      - name: nix-store
+        hostPath:
+          path: /nix/store
+          type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chat
+  namespace: app
+spec:
+  selector:
+    app: chat
+  ports:
+  - name: http
+    port: 8082
+---
+# --- Landing Service (Fast Dev) ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: landing
+  namespace: app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: landing
+  template:
+    metadata:
+      labels:
+        app: landing
+    spec:
+      containers:
+      - name: landing
+        image: dev-base:latest
+        imagePullPolicy: Never
+        command: ["/bin/bash", "-c", "${LANDING_BIN}/bin/start-landing"]
+        volumeMounts:
+        - name: nix-store
+          mountPath: /nix/store
+          readOnly: true
+        env:
+        - name: LANDING_SERVER_HTTP_PORT
+          value: "8081"
+        - name: LANDING_TELEMETRY_OTEL_ENDPOINT
+          value: "otel-collector.observability.svc.cluster.local:4317"
+      volumes:
+      - name: nix-store
+        hostPath:
+          path: /nix/store
+          type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: landing
+  namespace: app
+spec:
+  selector:
+    app: landing
+  ports:
+  - name: http
+    port: 8081
+---
+# --- Shell Service (Fast Dev) ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shell
+  namespace: app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: shell
+  template:
+    metadata:
+      labels:
+        app: shell
+    spec:
+      containers:
+      - name: shell
+        image: dev-base:latest
+        imagePullPolicy: Never
+        command: ["/bin/bash", "-c", "${SHELL_BIN}/bin/start-shell"]
+        env:
+        - name: SHELL_SERVER_HTTP_PORT
+          value: "9002"
+        - name: SHELL_TELEMETRY_OTEL_ENDPOINT
+          value: "otel-collector.observability.svc.cluster.local:4317"
+        volumeMounts:
+        - name: nix-store
+          mountPath: /nix/store
+          readOnly: true
+        - name: runtime-config
+          mountPath: /static/config.js
+          subPath: config.js
+      volumes:
+      - name: nix-store
+        hostPath:
+          path: /nix/store
+          type: Directory
+      - name: runtime-config
+        configMap:
+          name: frontend-runtime-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shell
+  namespace: app
+spec:
+  selector:
+    app: shell
+  ports:
+  - name: http
+    port: 9002
+---
+# --- Gateway (Envoy) (Fast Dev) ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gateway
+  template:
+    metadata:
+      labels:
+        app: gateway
+    spec:
+      containers:
+      - name: gateway
+        image: dev-base:latest
+        imagePullPolicy: Never
+        command: ["/bin/bash", "-c", "${GATEWAY_BIN}/bin/start-gateway"]
+        ports:
+        - containerPort: 8080
+        - containerPort: 9901
+        volumeMounts:
+        - name: nix-store
+          mountPath: /nix/store
+          readOnly: true
+        env:
+        - name: GATEWAY_HTTP_PORT
+          value: "8080"
+        - name: GATEWAY_PORT
+          value: "8080"
+        - name: LANDING_HOST
+          value: "landing.app.svc.cluster.local"
+        - name: LANDING_SERVER_HTTP_PORT
+          value: "8081"
+        - name: LANDING_PORT
+          value: "8081"
+        - name: CHAT_HOST
+          value: "chat.app.svc.cluster.local"
+        - name: CHAT_SERVER_HTTP_PORT
+          value: "8082"
+        - name: CHAT_PORT
+          value: "8082"
+        - name: NOTIFICATION_HOST
+          value: "notification.app.svc.cluster.local"
+        - name: NOTIFICATION_SERVER_HTTP_PORT
+          value: "8085"
+        - name: NOTIFICATION_PORT
+          value: "8085"
+        - name: SHELL_HOST
+          value: "shell.app.svc.cluster.local"
+        - name: SHELL_SERVER_HTTP_PORT
+          value: "9002"
+        - name: SHELL_PORT
+          value: "9002"
+        - name: OTEL_COLLECTOR_HOST
+          value: "otel-collector.observability.svc.cluster.local"
+        - name: OTEL_COLLECTOR_PORT
+          value: "4317"
+        - name: OTEL_COLLECTOR_HTTP_PORT
+          value: "4318"
+        - name: OTEL_ZIPKIN_PORT
+          value: "9411"
+      volumes:
+      - name: nix-store
+        hostPath:
+          path: /nix/store
+          type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  namespace: app
+spec:
+  type: LoadBalancer
+  selector:
+    app: gateway
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+  - name: admin
+    port: 9901
+    targetPort: 9901
